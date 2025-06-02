@@ -1,0 +1,7 @@
+venv
+.env
+test.py
+data_uploads
+test_data
+edge1
+edge2

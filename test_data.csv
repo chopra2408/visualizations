@@ -1,0 +1,201 @@
+EmployeeID,Date,Department,Region,JobLevel,PerformanceRating,Salary,ExperienceYears,ProjectCompletionRate,CustomerSatisfaction,BonusAmount,MonthlySalesUnits
+EMP1000,2022-12-31,HR,East,Mid-Level,Above Average,77450.0,6.1,0.71,4.0,8354,87
+EMP1001,2023-01-07,Engineering,North,Lead,Excellent,67926.0,6.7,0.64,3.5,6653,94
+EMP1002,2023-01-14,Operations,East,Junior,Average,79715.0,8.2,0.53,3.5,8596,90
+EMP1003,2023-01-23,Engineering,West,Junior,Above Average,92845.0,8.2,0.93,3.5,13713,131
+EMP1004,2023-01-27,Marketing,North,Senior,Average,66487.0,0.9,0.91,,8517,105
+EMP1005,2023-02-04,Engineering,East,Mid-Level,Average,66487.0,2.2,1.0,3.5,5835,113
+EMP1006,2023-02-11,Engineering,North,Lead,Excellent,93688.0,6.5,1.0,4.0,4822,106
+EMP1007,2023-02-17,Engineering,South,Mid-Level,Above Average,81511.0,6.5,0.78,5.0,6322,121
+EMP1008,2023-02-25,Sales,West,Junior,Average,62957.0,6.5,0.88,4.4,7018,100
+EMP1009,2023-03-03,Support,South,Mid-Level,Above Average,78138.0,16.6,0.97,,5097,113
+EMP1010,2023-03-10,Marketing,East,Lead,Excellent,63048.0,6.7,0.92,4.6,6234,107
+EMP1011,2023-03-20,Marketing,East,Mid-Level,Average,63014.0,8.4,0.62,3.5,7051,92
+EMP1012,2023-03-26,Sales,North,Lead,Excellent,73629.0,7.9,0.73,2.4,6446,98
+EMP1013,2023-04-03,Marketing,West,Senior,Above Average,41300.0,7.0,0.56,3.1,5342,86
+EMP1014,2023-04-09,Sales,West,Lead,Excellent,44126.0,4.1,0.98,2.5,2453,114
+EMP1015,2023-04-16,Marketing,West,Junior,Average,61565.0,7.3,0.8,3.6,3637,103
+EMP1016,2023-04-23,Operations,East,Senior,Average,54807.0,2.7,0.61,3.8,7268,115
+EMP1017,2023-04-29,Support,North,Mid-Level,Excellent,74713.0,4.3,0.84,5.0,6924,96
+EMP1018,2023-05-08,Operations,East,Senior,Excellent,56379.0,3.5,0.81,4.0,6766,111
+EMP1019,2023-05-14,Engineering,North,Senior,Above Average,48815.0,5.2,0.68,3.6,4213,110
+EMP1020,2023-05-19,Support,North,Mid-Level,Below Average,91984.0,11.9,0.56,4.4,7463,112
+EMP1021,2023-05-27,HR,South,Mid-Level,Average,66613.0,0.5,0.84,2.3,8025,103
+EMP1022,2023-06-05,Engineering,North,Mid-Level,Above Average,71012.0,7.1,0.76,4.0,8947,97
+EMP1023,2023-06-11,Sales,East,Junior,Average,48628.0,0.5,0.89,4.3,5998,99
+EMP1024,2023-06-16,Marketing,North,Junior,Below Average,61834.0,3.6,0.76,2.8,5557,99
+EMP1025,2023-06-26,HR,East,Mid-Level,Excellent,71663.0,8.3,0.93,4.6,7780,94
+EMP1026,2023-07-03,Marketing,North,Mid-Level,Above Average,52735.0,5.2,0.78,,4262,93
+EMP1027,2023-07-08,Marketing,East,Mid-Level,Above Average,75635.0,1.8,0.78,3.5,5415,105
+EMP1028,2023-07-17,Engineering,East,Senior,Above Average,60990.0,2.9,0.94,4.2,7920,105
+EMP1029,2023-07-22,Operations,West,Senior,Average,65624.0,7.0,0.7,5.0,3079,98
+EMP1030,2023-07-30,Support,East,Junior,Average,,2.8,0.57,3.9,9062,103
+EMP1031,2023-08-05,Sales,North,Mid-Level,Average,97784.0,5.6,0.51,4.0,8999,99
+EMP1032,2023-08-11,Operations,North,Junior,Excellent,69797.0,5.1,0.88,3.5,4271,105
+EMP1033,2023-08-19,Engineering,East,Mid-Level,Average,54134.0,3.0,0.81,3.2,5994,106
+EMP1034,2023-08-25,Engineering,West,Junior,Above Average,,11.4,0.85,4.4,11426,113
+EMP1035,2023-09-02,Operations,West,Mid-Level,Above Average,51687.0,6.9,0.61,3.2,6086,127
+EMP1036,2023-09-11,Operations,North,Lead,Average,73132.0,0.5,0.57,3.9,8914,93
+EMP1037,2023-09-17,Operations,South,Junior,Average,40604.0,5.6,0.51,3.5,5141,107
+EMP1038,2023-09-22,Sales,South,Senior,Above Average,50077.0,3.0,0.68,4.1,6295,99
+EMP1039,2023-09-30,HR,East,Mid-Level,Above Average,72952.0,7.6,0.79,4.0,9793,103
+EMP1040,2023-10-07,Engineering,East,Junior,Average,81076.0,2.6,0.7,4.5,7001,97
+EMP1041,2023-10-14,Sales,East,Junior,Below Average,72570.0,4.7,0.72,3.4,6645,114
+EMP1042,2023-10-23,Sales,East,Mid-Level,Average,68265.0,6.5,0.95,,4160,98
+EMP1043,2023-10-30,Sales,North,Mid-Level,Excellent,65483.0,7.6,0.67,3.1,9395,111
+EMP1044,2023-11-03,Engineering,South,Junior,Average,47822.0,1.4,0.76,3.5,6882,101
+EMP1045,2023-11-10,Marketing,East,Senior,Above Average,59202.0,4.0,0.89,4.1,3315,93
+EMP1046,2023-11-20,Sales,North,Senior,Average,63090.0,3.6,0.7,4.3,7485,93
+EMP1047,2023-11-24,Marketing,East,Lead,Average,85856.0,3.0,0.81,3.2,12412,110
+EMP1048,2023-12-03,Sales,East,Junior,Below Average,75154.0,10.3,0.93,4.4,4489,106
+EMP1049,2023-12-10,HR,North,Junior,Below Average,43554.0,6.2,0.97,4.7,5373,114
+EMP1050,2023-12-18,Engineering,West,Lead,Below Average,74861.0,1.2,0.57,4.1,10555,128
+EMP1051,2023-12-22,Operations,West,Lead,Excellent,64223.0,7.8,0.96,5.0,3987,115
+EMP1052,2023-12-30,Engineering,North,Junior,Above Average,59846.0,11.4,0.75,3.3,7337,96
+EMP1053,2024-01-07,Support,North,Lead,Above Average,79175.0,8.1,0.63,2.9,6541,108
+EMP1054,2024-01-15,Engineering,North,Mid-Level,Above Average,85464.0,0.5,0.73,2.6,12458,101
+EMP1055,2024-01-19,Sales,South,Mid-Level,Average,83969.0,3.5,0.99,4.8,12576,114
+EMP1056,2024-01-29,Sales,East,Senior,Average,57411.0,8.8,0.75,4.3,8613,116
+EMP1057,2024-02-03,Engineering,South,Mid-Level,Excellent,65361.0,2.9,0.66,3.8,7032,110
+EMP1058,2024-02-11,Operations,North,Junior,Average,74968.0,6.3,0.82,4.0,10309,109
+EMP1059,2024-02-19,Sales,South,Mid-Level,Above Average,84633.0,7.3,0.62,3.0,11733,107
+EMP1060,2024-02-26,Sales,East,Junior,Excellent,62812.0,2.2,0.54,5.0,5100,113
+EMP1061,2024-03-04,HR,East,Mid-Level,Above Average,,4.8,0.56,3.9,9652,97
+EMP1062,2024-03-09,Marketing,East,Mid-Level,Average,53404.0,0.5,0.56,3.9,2529,109
+EMP1063,2024-03-18,HR,East,Senior,Excellent,52056.0,1.9,0.58,4.3,6607,98
+EMP1064,2024-03-23,Support,West,Senior,Average,82187.0,4.2,0.57,4.1,5979,109
+EMP1065,2024-03-30,Operations,East,Junior,Excellent,90343.0,1.3,0.82,4.0,4890,112
+EMP1066,2024-04-06,Support,West,Junior,Excellent,68919.0,9.9,0.59,3.2,4040,104
+EMP1067,2024-04-14,Sales,West,Mid-Level,Excellent,85052.0,0.7,0.67,4.1,9834,93
+EMP1068,2024-04-21,Marketing,East,Mid-Level,Above Average,75424.0,3.7,0.95,5.0,6754,113
+EMP1069,2024-04-29,Marketing,South,Lead,Average,60323.0,5.4,0.74,,7061,99
+EMP1070,2024-05-06,HR,North,Lead,Average,75420.0,9.3,0.83,4.9,4040,97
+EMP1071,2024-05-12,Marketing,North,Mid-Level,Above Average,93070.0,0.7,0.59,3.4,6643,98
+EMP1072,2024-05-17,Support,East,Mid-Level,Above Average,69462.0,8.5,0.6,3.1,6994,88
+EMP1073,2024-05-26,Engineering,West,Mid-Level,Below Average,93469.0,5.0,0.52,3.7,10852,88
+EMP1074,2024-06-01,Support,East,Mid-Level,Above Average,30703.0,2.1,0.58,3.8,1721,99
+EMP1075,2024-06-09,Sales,West,Junior,Above Average,82328.0,6.4,0.64,4.6,9649,121
+EMP1076,2024-06-15,Support,North,Lead,Average,,5.6,0.59,2.6,10275,108
+EMP1077,2024-06-24,Engineering,South,Lead,Average,65514.0,3.2,0.54,4.9,7523,102
+EMP1078,2024-06-28,Sales,East,Mid-Level,Above Average,71376.0,5.2,0.56,3.7,4748,109
+EMP1079,2024-07-08,Sales,East,Lead,Excellent,40186.0,3.8,0.73,3.5,2083,106
+EMP1080,2024-07-13,Engineering,North,Mid-Level,Average,66704.0,5.3,0.6,3.1,9137,110
+EMP1081,2024-07-20,Sales,South,Mid-Level,Average,75356.0,7.0,0.68,2.6,3348,97
+EMP1082,2024-07-27,Support,West,Senior,Average,92168.0,9.8,0.75,4.4,13422,98
+EMP1083,2024-08-02,Sales,North,Mid-Level,Average,62225.0,1.3,0.85,3.9,6841,92
+EMP1084,2024-08-11,HR,West,Mid-Level,Above Average,57872.0,11.4,0.52,2.9,8217,116
+EMP1085,2024-08-19,Support,East,Senior,Average,62473.0,0.5,0.9,2.9,8127,113
+EMP1086,2024-08-26,Support,South,Senior,Average,83731.0,4.5,0.81,3.6,12646,126
+EMP1087,2024-09-01,Engineering,West,Mid-Level,Above Average,74931.0,6.8,0.54,5.0,5353,105
+EMP1088,2024-09-09,Operations,East,Junior,Below Average,62053.0,5.8,0.94,3.6,7739,109
+EMP1089,2024-09-13,Engineering,North,Senior,Above Average,,3.1,0.96,2.7,6666,109
+EMP1090,2024-09-23,Sales,South,Mid-Level,Above Average,71456.0,4.4,0.53,3.6,6500,93
+EMP1091,2024-09-28,Sales,East,Mid-Level,Below Average,84529.0,3.5,0.64,3.6,9390,96
+EMP1092,2024-10-06,HR,North,Junior,Average,59469.0,3.2,0.9,1.9,9067,118
+EMP1093,2024-10-11,Marketing,North,Junior,Above Average,65085.0,7.5,0.87,3.8,9979,82
+EMP1094,2024-10-20,Support,East,Senior,Above Average,64118.0,6.1,0.59,3.6,7846,102
+EMP1095,2024-10-25,HR,West,Lead,Average,48047.0,2.9,0.6,4.3,4695,93
+EMP1096,2024-11-02,Engineering,West,Mid-Level,Excellent,74441.0,7.7,0.69,,7558,110
+EMP1097,2024-11-10,Engineering,East,Lead,Below Average,73915.0,5.9,0.74,4.6,9609,106
+EMP1098,2024-11-18,Sales,North,Senior,Excellent,70076.0,7.4,0.81,3.6,5206,112
+EMP1099,2024-11-22,Marketing,East,Mid-Level,Average,66481.0,6.9,0.68,3.0,3735,126
+EMP1100,2024-12-01,Operations,South,Mid-Level,Above Average,48769.0,2.5,0.73,5.0,4517,101
+EMP1101,2024-12-09,Support,West,Junior,Above Average,63690.0,3.3,0.87,3.8,5210,96
+EMP1102,2024-12-15,Sales,West,Mid-Level,Average,64859.0,7.2,0.52,,5612,106
+EMP1103,2024-12-22,Engineering,West,Mid-Level,Average,57965.0,6.8,0.63,3.8,4569,123
+EMP1104,2024-12-29,Marketing,West,Mid-Level,Above Average,67580.0,4.9,0.86,3.9,4188,119
+EMP1105,2025-01-03,Marketing,West,Junior,Average,76060.0,5.4,0.95,3.7,3671,93
+EMP1106,2025-01-13,HR,North,Junior,Average,98292.0,8.8,0.76,3.4,15281,99
+EMP1107,2025-01-18,Support,North,Mid-Level,Below Average,72618.0,3.2,0.77,3.4,6836,114
+EMP1108,2025-01-24,Sales,North,Senior,Excellent,73863.0,6.6,0.55,3.8,7569,97
+EMP1109,2025-01-31,Engineering,West,Junior,Below Average,,4.4,0.72,3.4,7781,128
+EMP1110,2025-02-07,Engineering,East,Mid-Level,Average,41218.0,4.3,0.77,3.3,3828,114
+EMP1111,2025-02-15,Marketing,East,Mid-Level,Excellent,69602.0,8.3,0.62,,10190,100
+EMP1112,2025-02-24,Engineering,South,Mid-Level,Average,70903.0,7.5,0.63,3.6,8794,108
+EMP1113,2025-03-03,Marketing,North,Junior,Above Average,106948.0,7.4,0.69,4.9,6061,107
+EMP1114,2025-03-10,Operations,North,Mid-Level,Excellent,67114.0,8.9,0.51,1.9,5998,139
+EMP1115,2025-03-16,Engineering,South,Mid-Level,Below Average,,5.1,0.66,4.6,10489,105
+EMP1116,2025-03-23,Marketing,West,Mid-Level,Average,69479.0,7.0,0.61,4.7,10299,109
+EMP1117,2025-03-30,HR,West,Senior,Average,52469.0,4.1,0.66,2.3,4789,115
+EMP1118,2025-04-05,Engineering,North,Senior,Above Average,87142.0,6.0,0.56,3.6,9690,114
+EMP1119,2025-04-13,Operations,West,Mid-Level,Average,81278.0,4.6,0.95,3.5,6492,99
+EMP1120,2025-04-19,HR,North,Mid-Level,Above Average,81865.0,5.3,0.8,2.8,13071,121
+EMP1121,2025-04-28,Sales,North,Senior,Average,56359.0,6.8,0.84,3.3,4341,91
+EMP1122,2025-05-04,Engineering,West,Senior,Above Average,91041.0,2.5,0.89,3.0,13153,100
+EMP1123,2025-05-11,Engineering,East,Mid-Level,Average,48972.0,11.3,0.75,5.0,5690,106
+EMP1124,2025-05-16,Sales,North,Senior,Above Average,78802.0,2.0,0.54,4.5,9035,118
+EMP1125,2025-05-24,Engineering,North,Senior,Below Average,102856.0,1.4,0.77,4.7,9904,122
+EMP1126,2025-06-02,Support,East,Senior,Average,55141.0,8.5,0.79,4.3,3900,106
+EMP1127,2025-06-06,HR,East,Lead,Excellent,61505.0,7.4,0.87,3.0,3326,113
+EMP1128,2025-06-13,Engineering,North,Senior,Above Average,71494.0,6.9,0.72,3.4,5350,99
+EMP1129,2025-06-23,Operations,North,Mid-Level,Average,62447.0,6.9,0.56,4.1,4610,110
+EMP1130,2025-06-27,Marketing,North,Senior,Above Average,46740.0,5.0,0.64,2.9,5739,109
+EMP1131,2025-07-05,Engineering,West,Junior,Average,71028.0,2.3,0.68,4.3,6825,124
+EMP1132,2025-07-12,Sales,South,Lead,Average,54065.0,5.2,0.82,3.6,2403,121
+EMP1133,2025-07-20,Engineering,North,Mid-Level,Average,77103.0,3.0,0.79,3.5,10595,110
+EMP1134,2025-07-25,Support,North,Junior,Excellent,56208.0,7.9,0.68,,7890,121
+EMP1135,2025-08-03,Engineering,East,Senior,Above Average,93249.0,4.6,0.99,4.1,13837,114
+EMP1136,2025-08-08,Sales,East,Mid-Level,Average,58251.0,2.5,0.8,3.5,9549,138
+EMP1137,2025-08-16,Engineering,South,Mid-Level,Average,65169.0,4.0,0.62,4.6,4162,98
+EMP1138,2025-08-23,Marketing,West,Junior,Above Average,82202.0,6.2,0.55,3.0,7906,112
+EMP1139,2025-08-30,Engineering,East,Lead,Average,51537.0,3.3,0.58,4.2,6465,98
+EMP1140,2025-09-05,Engineering,West,Senior,Excellent,,2.5,0.62,4.2,8693,102
+EMP1141,2025-09-13,Operations,East,Mid-Level,Excellent,89607.0,5.7,0.58,3.6,6301,121
+EMP1142,2025-09-19,Marketing,South,Junior,Below Average,45887.0,5.7,0.59,4.0,6364,110
+EMP1143,2025-09-28,Marketing,North,Mid-Level,Above Average,72769.0,3.5,0.64,2.9,4483,113
+EMP1144,2025-10-03,Engineering,South,Junior,Above Average,73898.0,3.6,0.59,4.4,6087,123
+EMP1145,2025-10-12,Sales,East,Senior,Average,81727.0,5.7,0.95,3.7,9164,120
+EMP1146,2025-10-17,Sales,South,Senior,Above Average,51445.0,0.7,0.54,3.4,5309,106
+EMP1147,2025-10-26,HR,South,Junior,Excellent,50193.0,0.8,0.76,4.5,5619,113
+EMP1148,2025-11-01,Sales,South,Junior,Average,77829.0,2.8,0.71,3.3,4850,119
+EMP1149,2025-11-09,Engineering,East,Mid-Level,Average,74454.0,4.4,0.99,2.8,10386,118
+EMP1150,2025-11-15,Sales,North,Junior,Average,73757.0,5.9,0.56,2.7,5371,96
+EMP1151,2025-11-22,Sales,South,Junior,Average,75196.0,9.4,0.7,4.2,4397,103
+EMP1152,2025-11-30,Support,South,Mid-Level,Excellent,59799.0,7.6,0.98,2.9,8291,115
+EMP1153,2025-12-05,Sales,West,Mid-Level,Above Average,73483.0,4.5,0.93,5.0,11282,90
+EMP1154,2025-12-12,Marketing,West,Mid-Level,Above Average,,4.9,0.91,2.3,10405,122
+EMP1155,2025-12-22,Sales,East,Mid-Level,Excellent,59284.0,2.0,0.63,5.0,7578,97
+EMP1156,2025-12-26,Operations,East,Senior,Average,97986.0,4.9,0.59,,11705,111
+EMP1157,2026-01-05,Engineering,South,Senior,Above Average,77107.0,4.1,0.83,3.7,6678,110
+EMP1158,2026-01-09,HR,East,Mid-Level,Excellent,52130.0,6.0,0.96,3.4,3634,120
+EMP1159,2026-01-16,Engineering,West,Mid-Level,Average,79848.0,2.5,0.78,4.1,6383,104
+EMP1160,2026-01-24,Marketing,East,Mid-Level,Average,55379.0,6.6,0.79,3.8,4651,121
+EMP1161,2026-02-02,HR,North,Junior,Below Average,81806.0,9.6,0.64,4.6,5655,109
+EMP1162,2026-02-06,Support,West,Mid-Level,Average,87378.0,4.7,0.88,3.9,10042,110
+EMP1163,2026-02-16,Engineering,East,Mid-Level,Average,57689.0,6.2,0.59,3.9,6325,120
+EMP1164,2026-02-21,Support,West,Junior,Average,84450.0,7.1,0.66,3.5,4673,107
+EMP1165,2026-02-28,Marketing,West,Junior,Above Average,76191.0,3.8,0.71,3.8,5660,119
+EMP1166,2026-03-09,Support,West,Senior,Average,82330.0,5.7,0.75,4.0,9718,120
+EMP1167,2026-03-14,HR,East,Lead,Average,98451.0,5.0,0.62,2.6,5910,126
+EMP1168,2026-03-22,Support,East,Mid-Level,Above Average,66319.0,5.3,0.56,2.9,8999,118
+EMP1169,2026-03-29,Support,West,Mid-Level,Above Average,58693.0,2.7,0.81,4.3,5199,126
+EMP1170,2026-04-04,Engineering,West,Senior,Average,,5.1,0.64,3.9,6053,104
+EMP1171,2026-04-12,Sales,North,Junior,Average,57762.0,6.5,0.79,3.7,6063,135
+EMP1172,2026-04-17,Engineering,West,Senior,Below Average,68843.0,9.4,0.58,3.8,8341,113
+EMP1173,2026-04-27,Engineering,East,Lead,Above Average,75117.0,7.9,0.74,4.0,6154,115
+EMP1174,2026-05-01,HR,North,Lead,Average,74150.0,11.5,0.77,3.4,9485,138
+EMP1175,2026-05-11,Marketing,East,Junior,Average,82407.0,2.7,0.53,3.3,9207,103
+EMP1176,2026-05-16,Engineering,South,Senior,Excellent,70195.0,7.6,0.67,3.9,5209,131
+EMP1177,2026-05-22,Operations,South,Mid-Level,Above Average,91803.0,5.6,0.57,3.1,12481,110
+EMP1178,2026-05-30,Support,South,Mid-Level,Excellent,66030.0,11.6,0.53,4.1,8406,129
+EMP1179,2026-06-06,Sales,South,Mid-Level,Above Average,110802.0,2.6,0.99,2.6,13874,134
+EMP1180,2026-06-15,Engineering,North,Mid-Level,Above Average,79385.0,2.5,0.66,4.5,10912,126
+EMP1181,2026-06-22,Operations,South,Mid-Level,Average,57142.0,3.2,0.9,4.1,8028,129
+EMP1182,2026-06-29,Engineering,East,Mid-Level,Above Average,53936.0,0.5,0.63,4.0,7032,127
+EMP1183,2026-07-03,Sales,East,Mid-Level,Above Average,77237.0,3.4,0.84,4.5,10446,107
+EMP1184,2026-07-12,HR,West,Mid-Level,Average,66648.0,2.7,0.88,5.0,7851,93
+EMP1185,2026-07-20,HR,South,Junior,Average,80710.0,5.5,0.8,4.5,9426,105
+EMP1186,2026-07-27,Engineering,North,Junior,Excellent,77098.0,6.0,0.74,2.5,8588,128
+EMP1187,2026-07-31,Operations,North,Mid-Level,Above Average,68907.0,10.6,0.71,2.9,8613,118
+EMP1188,2026-08-10,Sales,North,Mid-Level,Above Average,57298.0,7.9,0.67,3.4,4137,125
+EMP1189,2026-08-14,Engineering,West,Mid-Level,Average,47277.0,3.3,0.96,3.8,6554,121
+EMP1190,2026-08-22,Sales,North,Junior,Excellent,63302.0,2.3,0.92,4.2,9050,113
+EMP1191,2026-08-31,Engineering,North,Junior,Above Average,82845.0,6.5,0.98,3.3,4344,125
+EMP1192,2026-09-07,Sales,South,Senior,Above Average,73211.0,1.0,0.56,3.9,9745,123
+EMP1193,2026-09-12,HR,South,Mid-Level,Average,51313.0,10.5,0.87,3.3,2227,107
+EMP1194,2026-09-19,Marketing,West,Mid-Level,Average,72597.0,8.5,0.97,3.4,6520,104
+EMP1195,2026-09-26,Support,East,Mid-Level,Average,75779.0,3.6,0.59,2.8,9596,129
+EMP1196,2026-10-05,Support,West,Mid-Level,Above Average,56742.0,0.5,0.53,3.2,4248,121
+EMP1197,2026-10-11,Engineering,West,Senior,Average,72305.0,9.1,0.87,2.9,8081,122
+EMP1198,2026-10-18,Operations,East,Mid-Level,Average,70873.0,4.7,0.79,3.1,10485,115
+EMP1199,2026-10-25,Support,South,Mid-Level,Above Average,52855.0,8.7,0.92,4.5,5255,120

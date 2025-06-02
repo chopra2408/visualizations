@@ -1,0 +1,4 @@
+RecordID,AllNaN_Col,SingleVal_Num,SingleVal_Cat,EmptyStr_Cat,MixedType_NumStr,Skewed_Num,Bool_Col,ProductID_IntLikeCat,Regular_Num_1,Regular_Cat_1
+ID_FEW_0,,50.0,Category_X,,10.5,1.0,True,20001,38.81715431242326,R
+ID_FEW_1,,50.0,Category_X,Alpha,oops,2.0,False,20002,0.39986296526854925,Q
+ID_FEW_2,,50.0,Category_X,,12.1,1000.0,True,20001,17.81719959148721,R
