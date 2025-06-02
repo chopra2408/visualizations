@@ -2,8 +2,9 @@ import streamlit as st
 import requests
 import base64
 import json 
+import os
 
-FASTAPI_URL = "http://localhost:8000"
+FASTAPI_URL = os.getenv("FASTAPI_BACKEND_URL", "http://localhost:8000")
 
 st.set_page_config(layout="wide", page_title="📊 Statistical Analyzer AI")
 
