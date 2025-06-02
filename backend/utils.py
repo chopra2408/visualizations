@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import io
 from typing import Optional 
-from models import PlotConfig
+from backend.models import PlotConfig
 
 def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[bytes]:
     print(f"--- Generating plot with config: {config.model_dump_json(indent=2)}") 

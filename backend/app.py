@@ -5,8 +5,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import io
 from fastapi.responses import StreamingResponse
-from agent_workflow import run_agent, stream_qna_response, RouteQuery, llm as agent_llm
-from models import QueryRequest, AgentResponse, FileInfo 
+from backend.agent_workflow import run_agent, stream_qna_response, RouteQuery, llm as agent_llm
+from backend.models import QueryRequest, AgentResponse, FileInfo 
 from langchain.prompts import ChatPromptTemplate
 
 app = FastAPI()

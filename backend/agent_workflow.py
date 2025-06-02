@@ -6,8 +6,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
-from utils import generate_plot_from_config 
-from models import PlotConfig 
+from backend.utils import generate_plot_from_config 
+from backend.models import PlotConfig 
 import numpy as np
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
