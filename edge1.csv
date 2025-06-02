@@ -1,4 +1,21 @@
-RecordID,AllNaN_Col,SingleVal_Num,SingleVal_Cat,EmptyStr_Cat,MixedType_NumStr,Skewed_Num,Bool_Col,ProductID_IntLikeCat,Regular_Num_1,Regular_Cat_1
-ID_FEW_0,,50.0,Category_X,,10.5,1.0,True,20001,38.81715431242326,R
-ID_FEW_1,,50.0,Category_X,Alpha,oops,2.0,False,20002,0.39986296526854925,Q
-ID_FEW_2,,50.0,Category_X,,12.1,1000.0,True,20001,17.81719959148721,R
+Name,Date of Birth,Job Title
+Alice Wonderland,1990-05-15,Software Engineer
+Bob The Builder,1985-12-01,Project Manager
+Charlie Brown,1992-07-22,Data Analyst
+Diana Prince,1988-03-08,UX Designer
+Edward Scissorhands,1975-10-31,System Administrator
+Fiona Gallagher,1995-09-12,Marketing Specialist
+George Jetson,2000-01-20,QA Tester
+Hannah Montana,1998-11-23,Product Owner
+Ian Malcolm,1970-06-05,Chief Scientist
+Julia Child,1982-08-15,Technical Writer
+Kevin McCallister,1993-02-14,DevOps Engineer
+Laura Palmer,1989-07-07,Graphic Designer
+Michael Scott,1978-04-01,Regional Manager
+Nancy Drew,1996-10-10,Business Analyst
+Oliver Twist,2002-05-25,Junior Developer
+Penelope Pitstop,1991-09-03,HR Coordinator
+Quincy Adams,1972-12-18,Database Administrator
+Rachel Green,1986-06-28,Sales Executive
+Stanley Hudson,1976-01-09,Accountant
+Tina Belcher,1999-03-30,Content Creator

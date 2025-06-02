@@ -1,192 +1,235 @@
 import streamlit as st
 import requests
 import base64
-import json 
-import os
-
-FASTAPI_URL = os.getenv("FASTAPI_BACKEND_URL", "http://localhost:8000")
-
-st.set_page_config(layout="wide", page_title="📊 Statistical Analyzer AI")
-
-st.title("📊 Statistical Analyzer AI")
-st.markdown("""
-Upload a CSV or XLSX file, then ask questions or request visualizations about your data!
-The AI will try to understand your request and generate responses or plots.
-""")
+from datetime import datetime
+import traceback
+import json # For parsing plot_config_json and handling streamed JSON
 
 # Initialize session state variables
-if "session_id" not in st.session_state:
-    st.session_state.session_id = None
-if "file_info" not in st.session_state:
-    st.session_state.file_info = None
 if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "df_preview" not in st.session_state:
-    st.session_state.df_preview = None
-if "processed_file_identifier" not in st.session_state:
-    st.session_state.processed_file_identifier = None
+    st.session_state.messages = [] # To store chat history objects
+if "current_session_id" not in st.session_state:
+    st.session_state.current_session_id = None
+if "df_columns" not in st.session_state:
+    st.session_state.df_columns = []
+if "df_head" not in st.session_state:
+    st.session_state.df_head = ""
 
+st.set_page_config(layout="wide", page_title="Data Analysis Agent")
+st.title("📊 Conversational Data Analysis Agent")
+
+# --- File Uploader ---
 with st.sidebar:
     st.header("1. Upload Your Data")
-    uploaded_file = st.file_uploader("Choose a CSV or XLSX file", type=["csv", "xlsx"])
-
+    uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=["csv", "xlsx", "xls"])
     if uploaded_file is not None:
-        current_file_identifier = (uploaded_file.name, uploaded_file.size, uploaded_file.type)
-
-        if st.session_state.processed_file_identifier != current_file_identifier or not st.session_state.session_id:
-            st.session_state.messages = [] # Reset chat on new file processing
-            with st.spinner("Processing file..."):
-                files_payload = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+        if st.session_state.current_session_id is None or st.button("Reload File and Start New Session"):
+            with st.spinner("Uploading and processing file..."):
+                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
                 try:
-                    response = requests.post(f"{FASTAPI_URL}/uploadfile/", files=files_payload)
-                    response.raise_for_status()
-
-                    file_upload_response = response.json()
-                    backend_session_id = file_upload_response.get("session_id")
-
-                    if backend_session_id:
-                        st.session_state.session_id = backend_session_id
-                        st.session_state.file_info = file_upload_response
-                        st.session_state.processed_file_identifier = current_file_identifier
-                        st.success(f"File '{st.session_state.file_info['filename']}' processed successfully!")
-                        st.session_state.df_preview = st.session_state.file_info.get("df_head", "Preview not available.")
-                    else:
-                        st.error("Backend did not return a session ID. File processing may have failed or response format is incorrect.")
-                        st.session_state.session_id = None
-                        st.session_state.file_info = None
-                        st.session_state.processed_file_identifier = None
-
+                    upload_response = requests.post("http://localhost:8000/uploadfile/", files=files)
+                    upload_response.raise_for_status()
+                    file_info = upload_response.json()
+                    st.session_state.current_session_id = file_info["session_id"]
+                    st.session_state.df_columns = file_info["columns"]
+                    st.session_state.df_head = file_info["df_head"]
+                    st.session_state.messages = [] # Clear chat on new file
+                    st.success(f"File '{file_info['filename']}' uploaded! Session ID: {st.session_state.current_session_id}")
+                    st.subheader("Data Preview:")
+                    st.text_area("First 5 rows:", value=st.session_state.df_head, height=150, disabled=True)
+                    st.write("Columns:", st.session_state.df_columns)
                 except requests.exceptions.RequestException as e:
-                    st.error(f"Error connecting to backend: {e}")
-                    st.session_state.session_id = None
-                    st.session_state.file_info = None
-                    st.session_state.processed_file_identifier = None
+                    st.error(f"Upload failed: {e}")
                 except Exception as e:
-                    st.error(f"Error processing file upload: {e}")
-                    st.session_state.session_id = None
-                    st.session_state.file_info = None
-                    st.session_state.processed_file_identifier = None
+                    st.error(f"Error processing file: {e}")
+    
+    if st.session_state.current_session_id:
+        st.sidebar.success(f"Active Session: {st.session_state.current_session_id[:8]}...")
+        st.sidebar.subheader("Data Context")
+        st.sidebar.text_area("Columns:", value=", ".join(st.session_state.df_columns), height=100, disabled=True)
 
-    if st.session_state.file_info and st.session_state.session_id:
-        st.subheader("File Information:")
-        st.write(f"**Name:** {st.session_state.file_info.get('filename', 'N/A')}")
-        st.write(f"**Columns:** {', '.join(st.session_state.file_info.get('columns', []))}")
-        if st.session_state.df_preview:
-            st.subheader("Data Preview (First 5 Rows):")
-            st.text_area("DataFrame Head", value=st.session_state.df_preview, height=200, disabled=True)
 
+# --- Chat Interface ---
 st.header("2. Chat with Your Data")
 
-if not st.session_state.session_id:
-    st.warning("Please upload a data file first.")
-else:
-    # Display chat messages
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            if message.get("is_streamed_response"): # If it was a streamed response
-                st.markdown(message["content"]) # Display the accumulated content
-            else: # For non-streamed (e.g., visualization)
-                st.markdown(message.get("content", ""))
-                if message.get("plot_config_str"):
-                    with st.expander("View Plot Configuration Used"):
-                        st.code(message["plot_config_str"], language="json")
-                if "image_b64" in message and message["image_b64"] is not None: # Expecting b64 string
-                    try:
-                        img_bytes = base64.b64decode(message["image_b64"])
-                        st.image(img_bytes, caption="Generated Plot", use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Error displaying image from history: {e}")
+for msg_obj in st.session_state.messages:
+    with st.chat_message(msg_obj["role"]):
+        # Display pre-summary if it exists
+        if msg_obj.get("pre_summary_content"):
+            st.markdown(">" + msg_obj["pre_summary_content"]) # Display as a quote or styled
+            st.markdown("---") # Separator
+
+        # Display main content
+        st.markdown(msg_obj.get("content", ""))
+
+        if msg_obj["role"] == "assistant":
+            # Plot image from the 'data' part of final_agent_response
+            if msg_obj.get("plot_image_bytes"):
+                img_bytes = base64.b64decode(msg_obj["plot_image_bytes"])
+                st.image(img_bytes, caption="Generated Plot", use_container_width =True)
+            
+            if msg_obj.get("plot_insights"):
+                with st.expander("🔍 View Plot Insights/Summary", expanded=False):
+                    st.markdown(msg_obj["plot_insights"])
+            
+            thinking_expander_title = "⚙️ View Agent's Thinking & Configuration"
+            show_thinking_details = False
+            if msg_obj.get("plot_config_json") or msg_obj.get("thinking_log_str"):
+                show_thinking_details = True
+
+            if show_thinking_details:
+                with st.expander(thinking_expander_title, expanded=False):
+                    if msg_obj.get("plot_config_json"):
+                        st.write("**Plot Configuration Used:**")
+                        try:
+                            config_dict = json.loads(msg_obj["plot_config_json"])
+                            st.json(config_dict, expanded=False)
+                        except:
+                            st.text(msg_obj["plot_config_json"])
+                    
+                    if msg_obj.get("thinking_log_str"):
+                        st.write("**Agent's Process Log:**")
+                        st.text_area("Log:", value=msg_obj["thinking_log_str"], height=250, disabled=True, key=f"log_{msg_obj.get('timestamp', len(st.session_state.messages))}") # Ensure unique key
+                    
+                    if msg_obj.get("response_type"):
+                         st.caption(f"Agent Action Type: {msg_obj['response_type']}")
+                    if msg_obj.get("error") and msg_obj.get("response_type") == "error":
+                        st.error(f"Agent Error: {msg_obj['error']}")
 
 
-    if prompt := st.chat_input("Ask about your data or request a visualization..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+if prompt := st.chat_input("Ask about your data or request a plot... (e.g., 'show age distribution')"):
+    if not st.session_state.current_session_id:
+        st.warning("Please upload a data file first using the sidebar.")
+    else:
+        current_message_timestamp = datetime.now().isoformat() # For unique keys
+        st.chat_message("user").write(prompt)
+        st.session_state.messages.append({"role": "user", "content": prompt, "timestamp": current_message_timestamp})
+
+        payload = {"session_id": st.session_state.current_session_id, "query": prompt}
+        backend_url = "http://localhost:8000/process_query/"
 
         with st.chat_message("assistant"):
-            message_placeholder = st.empty() # For streaming display
-            full_response_content = ""
-            assistant_message_for_history = {"role": "assistant", "content": ""}
+            pre_summary_content_full = ""
+            qna_content_full = ""
+            
+            # Placeholders for different parts of the response
+            pre_summary_placeholder = st.empty()
+            qna_placeholder = st.empty() # For Q&A content
+            final_response_placeholder = st.container() # For plot, insights etc. from final_agent_response
+
+            assistant_response_data_for_history = {"role": "assistant", "timestamp": current_message_timestamp}
 
             try:
-                payload = {"session_id": st.session_state.session_id, "query": prompt}
-                # Use stream=True for requests
-                with requests.post(f"{FASTAPI_URL}/process_query/", json=payload, stream=True) as r:
-                    r.raise_for_status() # Check for HTTP errors early
-
-                    # Determine if response is streaming (ndjson) or a single JSON object
-                    content_type = r.headers.get("content-type", "")
-
-                    if "application/x-ndjson" in content_type:
-                        assistant_message_for_history["is_streamed_response"] = True
-                        for line in r.iter_lines(): # Process ndjson line by line
-                            if line:
-                                try:
-                                    chunk_data = json.loads(line.decode('utf-8'))
-                                    if chunk_data.get("type") == "content":
-                                        full_response_content += chunk_data.get("chunk", "")
-                                        message_placeholder.markdown(full_response_content + "▌")
-                                    elif chunk_data.get("type") == "system":
-                                        print(f"System message from stream: {chunk_data.get('message')}") # Log or display if needed
-                                    elif chunk_data.get("type") == "error": # Handle error from stream
-                                        error_detail = chunk_data.get("data", {}).get("error", "Unknown stream error")
-                                        full_response_content += f"\n⚠️ Error during stream: {error_detail}"
-                                        message_placeholder.error(full_response_content)
-                                        break # Stop processing stream on error
-                                except json.JSONDecodeError:
-                                    print(f"Warning: Could not decode JSON line from stream: {line}")
-                        message_placeholder.markdown(full_response_content) # Final update without cursor
-                        assistant_message_for_history["content"] = full_response_content
-
-                    else: # Assume it's a single JSON response (e.g., for visualization)
-                        assistant_message_for_history["is_streamed_response"] = False
-                        agent_res_json = r.json() # Parse the whole JSON
-
-                        response_type = agent_res_json.get("response_type")
-                        content = agent_res_json.get("content", "")
-                        plot_bytes_b64 = agent_res_json.get("plot_image_bytes") # Expecting base64 string
-                        plot_config_json_str = agent_res_json.get("plot_config_json")
-                        error_msg = agent_res_json.get("error")
-
-                        text_parts_for_display = []
-                        if error_msg: text_parts_for_display.append(f"⚠️ Error: {error_msg}")
-                        if content: text_parts_for_display.append(content)
-                        
-                        full_response_content = "\n\n".join(filter(None, text_parts_for_display))
-                        if not full_response_content and not plot_bytes_b64 and not plot_config_json_str:
-                            full_response_content = "Received an empty non-streaming response."
-                        
-                        message_placeholder.markdown(full_response_content)
-                        assistant_message_for_history["content"] = full_response_content
-
-                        if plot_config_json_str and response_type == "visualize":
+                with requests.post(backend_url, json=payload, stream=True, timeout=180) as r: # stream=True, increased timeout
+                    r.raise_for_status()
+                    
+                    for line in r.iter_lines():
+                        if line:
                             try:
-                                pretty_config = json.dumps(json.loads(plot_config_json_str), indent=2)
-                                with st.expander("View Plot Configuration Used"):
-                                    st.code(pretty_config, language="json")
-                                assistant_message_for_history["plot_config_str"] = pretty_config
+                                chunk_data = json.loads(line.decode('utf-8'))
+                                chunk_type = chunk_data.get("type")
+
+                                if chunk_type == "pre_summary_chunk":
+                                    pre_summary_content_full += chunk_data.get("chunk", "")
+                                    pre_summary_placeholder.markdown(">" + pre_summary_content_full + "▌")
+                                elif chunk_type == "content": # Q&A content
+                                    qna_content_full += chunk_data.get("chunk", "")
+                                    qna_placeholder.markdown(qna_content_full + "▌")
+                                elif chunk_type == "final_agent_response":
+                                    # This is the full agent response for visualize/fallback
+                                    response_data = chunk_data.get("data", {})
+                                    assistant_response_data_for_history.update(response_data) # Merge into history object
+
+                                    # Clear placeholders used for streaming text if they were used
+                                    pre_summary_placeholder.empty()
+                                    qna_placeholder.empty()
+                                    
+                                    # Now display the final agent response components
+                                    with final_response_placeholder:
+                                        main_content = response_data.get("content", "No textual response provided.")
+                                        st.markdown(main_content)
+                                        assistant_response_data_for_history["content"] = main_content
+
+
+                                        if response_data.get("plot_image_bytes"):
+                                            img_bytes = base64.b64decode(response_data["plot_image_bytes"])
+                                            st.image(img_bytes, caption="Generated Plot", use_container_width =True)
+                                        
+                                        if response_data.get("plot_insights"):
+                                            with st.expander("🔍 View Plot Insights/Summary", expanded=False):
+                                                st.markdown(response_data["plot_insights"])
+                                        
+                                        thinking_expander_title = "⚙️ View Agent's Thinking & Configuration"
+                                        show_thinking_details = False
+                                        if response_data.get("plot_config_json") or response_data.get("thinking_log_str"):
+                                            show_thinking_details = True
+                                        
+                                        if show_thinking_details:
+                                            with st.expander(thinking_expander_title, expanded=False):
+                                                if response_data.get("plot_config_json"):
+                                                    st.write("**Plot Configuration Used:**")
+                                                    try:
+                                                        config_dict = json.loads(response_data["plot_config_json"])
+                                                        st.json(config_dict, expanded=False)
+                                                    except: st.text(response_data["plot_config_json"])
+                                                
+                                                if response_data.get("thinking_log_str"):
+                                                    st.write("**Agent's Process Log:**")
+                                                    st.text_area("Log:", value=response_data["thinking_log_str"], height=250, disabled=True, key=f"log_final_{current_message_timestamp}")
+                                                
+                                                if response_data.get("response_type"):
+                                                    st.caption(f"Agent Action Type: {response_data['response_type']}")
+                                                if response_data.get("error") and response_data.get("response_type") == "error":
+                                                    st.error(f"Agent Error: {response_data['error']}")
+
+
+                                elif chunk_type == "system":
+                                    print(f"Stream system message: {chunk_data.get('message')}")
+                                elif chunk_type == "error":
+                                    error_chunk_content = chunk_data.get("chunk") or chunk_data.get("content", "Unknown stream error")
+                                    st.error(f"Stream Error: {error_chunk_content}")
+                                    assistant_response_data_for_history["content"] = f"Error: {error_chunk_content}"
+                                    assistant_response_data_for_history["response_type"] = "error"
+                                    break # Stop processing further stream on error
+
                             except json.JSONDecodeError:
-                                st.warning("Could not parse plot config for display.")
-                                assistant_message_for_history["plot_config_str"] = plot_config_json_str
-
-
-                        if plot_bytes_b64:
-                            try:
-                                img_bytes = base64.b64decode(plot_bytes_b64)
-                                if img_bytes:
-                                    st.image(img_bytes, caption="Generated Plot", use_container_width=True)
-                                    assistant_message_for_history["image_b64"] = plot_bytes_b64 # Store b64 string
-                                else: st.warning("Received empty plot image data.")
-                            except Exception as e: st.error(f"Error displaying plot: {e}")
+                                print(f"Stream: Failed to decode line: {line}")
                 
-                st.session_state.messages.append(assistant_message_for_history)
+                # Finalize placeholders after stream
+                if pre_summary_content_full:
+                    pre_summary_placeholder.markdown(">" + pre_summary_content_full)
+                    assistant_response_data_for_history["pre_summary_content"] = pre_summary_content_full
+                
+                if qna_content_full: # This means it was a Q&A response
+                    qna_placeholder.markdown(qna_content_full)
+                    assistant_response_data_for_history["content"] = qna_content_full
+                    if "response_type" not in assistant_response_data_for_history : # if not set by error or final_agent_response
+                         assistant_response_data_for_history["response_type"] = "query_data"
+
+                st.session_state.messages.append(assistant_response_data_for_history)
+
+            except requests.exceptions.HTTPError as http_err:
+                # ... (error handling as before, ensure it populates assistant_response_data_for_history) ...
+                error_content = f"HTTP error from backend: {http_err}"
+                try: 
+                    error_detail = http_err.response.json().get("detail", str(http_err))
+                    error_content = f"Backend Error: {error_detail}"
+                except: pass
+                st.error(error_content)
+                assistant_response_data_for_history["content"] = error_content
+                assistant_response_data_for_history["response_type"] = "error"
+                st.session_state.messages.append(assistant_response_data_for_history)
 
             except requests.exceptions.RequestException as e:
-                error_text = f"Error communicating with AI backend: {e}"
-                message_placeholder.error(error_text)
-                st.session_state.messages.append({"role": "assistant", "content": error_text, "is_streamed_response": False})
+                # ... (error handling as before) ...
+                st.error(f"Could not connect to backend: {e}")
+                assistant_response_data_for_history["content"] = f"Error connecting to backend: {e}"
+                assistant_response_data_for_history["response_type"] = "error"
+                st.session_state.messages.append(assistant_response_data_for_history)
             except Exception as e:
-                error_text = f"An unexpected error occurred in frontend: {e}"
-                import traceback
-                st.error(f"{error_text}\n```\n{traceback.format_exc()}\n```")
-                st.session_state.messages.append({"role": "assistant", "content": error_text, "is_streamed_response": False})
+                # ... (error handling as before) ...
+                st.error(f"An unexpected error occurred: {e}")
+                traceback.print_exc()
+                assistant_response_data_for_history["content"] = f"Unexpected error in Streamlit: {e}"
+                assistant_response_data_for_history["response_type"] = "error"
+                st.session_state.messages.append(assistant_response_data_for_history)
