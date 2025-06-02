@@ -108,7 +108,7 @@ for i, msg_obj in enumerate(st.session_state.messages):
             if msg_obj.get("plot_image_bytes"):
                 try:
                     img_bytes = base64.b64decode(msg_obj["plot_image_bytes"])
-                    st.image(img_bytes, caption="Generated Plot", use_column_width=True)
+                    st.image(img_bytes, caption="Generated Plot", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error decoding plot image: {e}")
             
@@ -203,7 +203,7 @@ if prompt := st.chat_input("Ask about your data or request a plot...", key="chat
 
                                     if response_data.get("plot_image_bytes"):
                                         img_bytes = base64.b64decode(response_data["plot_image_bytes"])
-                                        st.image(img_bytes, caption="Generated Plot", use_column_width=True)
+                                        st.image(img_bytes, caption="Generated Plot", use_container_width=True)
                                     
                                     if response_data.get("plot_insights"):
                                         with st.expander("🔍 View Plot Insights/Summary", expanded=False):
