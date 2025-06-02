@@ -186,7 +186,3 @@ async def process_query(request: QueryRequest): # Return type annotation removed
         yield json.dumps({"type": "system", "message": "Full processing stream ended."}) + "\n"
 
     return StreamingResponse(combined_stream_generator(), media_type="application/x-ndjson")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
