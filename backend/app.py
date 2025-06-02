@@ -5,9 +5,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import io
 from fastapi.responses import StreamingResponse, JSONResponse
-# Ensure your agent_workflow imports are correct
-from agent_workflow import run_agent, stream_pre_agent_summary, stream_qna_response, RouteQuery, llm as agent_llm
-from models import QueryRequest, AgentResponse, FileInfo # AgentResponse should have new fields
+from backend.agent_workflow import run_agent, stream_pre_agent_summary, stream_qna_response, RouteQuery, llm as agent_llm
+from backend.models import QueryRequest, AgentResponse, FileInfo # AgentResponse should have new fields
 from langchain.prompts import ChatPromptTemplate
 import traceback
 import zipfile

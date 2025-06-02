@@ -4,13 +4,10 @@ import seaborn as sns
 import io
 from typing import Optional
 from datetime import datetime
-from models import PlotConfig 
+from backend.models import PlotConfig 
 import traceback
 
 def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[bytes]:
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    print("UTILS_GENERATE_PLOT: RUNNING VERSION FROM [Timestamp of edit, e.g., 2023-10-27_1000]") 
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
     print(f"UTILS_GENERATE_PLOT: Received config: {config.model_dump_json(indent=2)}")
     print(f"UTILS_GENERATE_PLOT: df columns available: {df.columns.tolist()}")
 

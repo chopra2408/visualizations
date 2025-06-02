@@ -3,7 +3,8 @@ import requests
 import base64
 from datetime import datetime
 import traceback
-import json # For parsing plot_config_json and handling streamed JSON
+import json 
+import os
 
 # Initialize session state variables
 if "messages" not in st.session_state:
@@ -106,7 +107,7 @@ if prompt := st.chat_input("Ask about your data or request a plot... (e.g., 'sho
         st.session_state.messages.append({"role": "user", "content": prompt, "timestamp": current_message_timestamp})
 
         payload = {"session_id": st.session_state.current_session_id, "query": prompt}
-        backend_url = "http://localhost:8000/process_query/"
+        backend_url = os.getenv("FASTAPI_BACKEND_URL", "http://localhost:8000/run_agent/")
 
         with st.chat_message("assistant"):
             pre_summary_content_full = ""
