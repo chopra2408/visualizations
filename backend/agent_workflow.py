@@ -649,7 +649,7 @@ import pandas as pd
 from typing import TypedDict, List, Optional, Tuple
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
 from backend.utils import generate_plot_from_config, calculate_age_from_dob
