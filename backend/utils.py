@@ -432,7 +432,7 @@ import seaborn as sns
 import json
 from typing import Optional
 from datetime import datetime
-from models import PlotConfig
+from backend.models import PlotConfig
 import traceback
 import numpy as np
 import plotly.tools

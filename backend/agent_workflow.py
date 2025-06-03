@@ -652,8 +652,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
-from utils import generate_plot_from_config, calculate_age_from_dob
-from models import PlotConfig
+from backend.utils import generate_plot_from_config, calculate_age_from_dob
+from backend.models import PlotConfig
 import numpy as np
 import traceback
 import json
