@@ -10,7 +10,7 @@ from backend.utils import generate_plot_from_config, calculate_age_from_dob
 from backend.models import PlotConfig
 import numpy as np
 import traceback
-import json
+import json 
 
 # Load environment variables
 dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')

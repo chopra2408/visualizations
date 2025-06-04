@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Optional
 from datetime import datetime
-from  backend.models import PlotConfig # Assuming models.py is in backend folder
+from backend.models import PlotConfig # Assuming models.py is in backend folder
 import traceback
 import numpy as np
 import plotly.tools
