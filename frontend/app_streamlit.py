@@ -1,42 +1,37 @@
 # frontend/app_streamlit.py
 
 import streamlit as st
-import requests # To communicate with your FastAPI backend
+import requests
 import traceback
 import json
 from datetime import datetime
 import os
 from dotenv import load_dotenv
-import plotly.io as plotly_io # To parse Plotly JSON from backend
-import streamlit.components.v1 as components # For custom HTML/JS
+import plotly.io as plotly_io
+import streamlit.components.v1 as components
 
 # --- Environment Variable Loading ---
-# Assuming .env file is in the parent directory of 'frontend' or in the same directory as where you run streamlit
-dotenv_path_streamlit = os.path.join(os.path.dirname(__file__), '..', '.env') # Goes one level up for .env
+dotenv_path_streamlit = os.path.join(os.path.dirname(__file__), '..', '.env')
 if not os.path.exists(dotenv_path_streamlit):
-    dotenv_path_streamlit = os.path.join(os.path.dirname(__file__), '.env') # Checks current directory
-
+    dotenv_path_streamlit = os.path.join(os.path.dirname(__file__), '.env')
 load_dotenv(dotenv_path_streamlit)
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
 
 if not BACKEND_BASE_URL:
-    st.error("FATAL ERROR: BACKEND_BASE_URL environment variable not set. Please check your .env file.")
+    st.error("FATAL ERROR: BACKEND_BASE_URL environment variable not set.")
     st.stop()
 
-# Construct full endpoint URLs
 UPLOAD_URL = f"{BACKEND_BASE_URL.rstrip('/')}/uploadfile/"
 PROCESS_QUERY_URL = f"{BACKEND_BASE_URL.rstrip('/')}/process_query/"
-SCREENCAST_UPLOAD_URL = f"{BACKEND_BASE_URL.rstrip('/')}/upload_screencast/"
+# SCREENCAST_UPLOAD_URL is not used by the JS component in this "download-only" version
+# SCREENCAST_UPLOAD_URL = f"{BACKEND_BASE_URL.rstrip('/')}/upload_screencast/"
+
 
 # --- Initialize session state variables ---
 default_session_vars = {
-    "messages": [],
-    "current_session_id": None,
-    "df_columns": [],
-    "df_head": "",
-    "current_filename": "",
-    "plot_key_counter": 0,
+    "messages": [], "current_session_id": None, "df_columns": [], "df_head": "",
+    "current_filename": "", "plot_key_counter": 0,
 }
 for key, value in default_session_vars.items():
     if key not in st.session_state:
@@ -46,23 +41,18 @@ for key, value in default_session_vars.items():
 st.set_page_config(layout="wide", page_title="Conversational Data Agent")
 st.title("📊 Conversational Data Analysis Agent")
 
-# --- Sidebar for File Upload and Data Info ---
+# --- Sidebar ---
 with st.sidebar:
     st.header("1. Upload Your Data")
-    uploaded_file = st.file_uploader(
-        "Choose a CSV or Excel file (.csv, .xlsx, .xls)",
-        type=["csv", "xlsx", "xls"],
-        key="file_uploader_widget"
-    )
+    uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=["csv", "xlsx", "xls"], key="file_uploader_widget")
 
-    if uploaded_file is not None:
+    if uploaded_file:
         if st.button("Upload and Start New Session", key="upload_button_widget"):
-            with st.spinner("Uploading and processing file... This may take a moment."):
+            with st.spinner("Uploading..."):
                 files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
                 try:
                     upload_response = requests.post(UPLOAD_URL, files=files, timeout=120)
                     upload_response.raise_for_status()
-
                     file_info = upload_response.json()
                     st.session_state.current_session_id = file_info["session_id"]
                     st.session_state.df_columns = file_info["columns"]
@@ -70,39 +60,27 @@ with st.sidebar:
                     st.session_state.current_filename = file_info["filename"]
                     st.session_state.messages = []
                     st.session_state.plot_key_counter = 0
-
-                    st.success(f"File '{st.session_state.current_filename}' processed! Session ID: ...{st.session_state.current_session_id[-6:]}")
+                    st.success(f"File '{st.session_state.current_filename}' processed! Session: ...{st.session_state.current_session_id[-6:]}")
                     st.rerun()
-
-                except requests.exceptions.Timeout:
-                    st.error(f"Upload failed: The request to the backend timed out.")
-                except requests.exceptions.HTTPError as http_err:
-                    error_detail = "No specific error detail from server."
-                    try:
-                        error_detail = http_err.response.json().get("detail", str(http_err))
-                    except json.JSONDecodeError:
-                        error_detail = http_err.response.text if http_err.response.text else str(http_err)
-                    st.error(f"Upload failed (HTTP {http_err.response.status_code if http_err.response else 'Unknown'}): {error_detail}")
-                except requests.exceptions.RequestException as req_err:
-                    st.error(f"Upload failed: Could not connect to the backend at {UPLOAD_URL}. Error: {req_err}")
                 except Exception as e:
-                    st.error(f"An unexpected error occurred during file upload: {e}")
+                    st.error(f"File upload failed: {str(e)[:500]}") # Show first 500 chars of error
                     traceback.print_exc()
+
 
     if st.session_state.current_session_id:
         st.sidebar.markdown("---")
         st.sidebar.success(f"Active Session: `...{st.session_state.current_session_id[-12:]}`")
         st.sidebar.info(f"Current File: **{st.session_state.current_filename}**")
-        with st.sidebar.expander("Data Preview (Head & Columns)", expanded=False):
+        with st.sidebar.expander("Data Preview", expanded=False):
             st.text_area("Columns:", value=", ".join(st.session_state.df_columns), height=100, disabled=True, key="sidebar_df_cols_preview")
-            st.text_area("First 5 rows (Data Head):", value=st.session_state.df_head, height=150, disabled=True, key="sidebar_df_head_preview")
+            st.text_area("Data Head:", value=st.session_state.df_head, height=150, disabled=True, key="sidebar_df_head_preview")
 
         st.sidebar.markdown("---")
-        st.sidebar.header("🎬 Record Screen")
+        st.sidebar.header("🎬 Record Screen (Client-Side Download)")
 
-        # IMPORTANT: Replace with your actual published NPM package name and desired version
-        PACKAGE_NAME = "simple-screen-recorder"  # <<<< CHANGE THIS TO YOUR PUBLISHED NPM PACKAGE NAME
-        PACKAGE_VERSION = "latest"  # Or a specific version e.g., "0.1.0"
+        # IMPORTANT: Replace with your actual published NPM package name
+        PACKAGE_NAME = "simple-screen-recorder"  # <<<< YOUR PUBLISHED NPM PACKAGE NAME
+        PACKAGE_VERSION = "latest" # Or your specific version
 
         if PACKAGE_NAME.startswith('@'):
             cdn_url = f"https://cdn.jsdelivr.net/npm/{PACKAGE_NAME}@{PACKAGE_VERSION}/+esm"
@@ -114,17 +92,13 @@ with st.sidebar:
             <button id="startRecordButtonSSR" style="padding: 8px 12px; margin-right: 10px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Start Recording</button>
             <button id="stopRecordButtonSSR" style="padding: 8px 12px; background-color: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Stop</button>
             <p id="recorderStatusSSR" style="margin-top: 10px; font-size: 0.9em;">Status: Idle</p>
-            <p id="uploadStatusSSR" style="font-size: 0.9em;"></p>
+            <p id="actionStatusSSR" style="font-size: 0.9em;"></p>
             <video id="videoPreviewSSR" controls muted style="max-width: 100%; margin-top:10px; display:none;"></video>
-            {'''
-            <!-- Example for a manual download button (Option 3) - currently not primary -->
-            <!-- <button id="downloadButtonSSR" style="padding: 8px 12px; margin-top: 10px; background-color: #008CBA; color: white; border: none; border-radius: 4px; cursor: pointer; display:none;">Download Recording</button> -->
-            '''}
         </div>
 
         <script type="module">
             const rootElSSR = document.getElementById('recorderInterfaceRootSSR');
-            let ScreenRecorder, SimpleScreenRecorderStatus; // To store imported classes/enums
+            let ScreenRecorder, SimpleScreenRecorderStatus;
 
             try {{
                 const module = await import('{cdn_url}');
@@ -132,20 +106,19 @@ with st.sidebar:
                 SimpleScreenRecorderStatus = module.SimpleScreenRecorderStatus;
 
                 if (!ScreenRecorder || !SimpleScreenRecorderStatus) {{
-                    throw new Error('ScreenRecorder or SimpleScreenRecorderStatus not found in the imported module. Check package exports.');
+                    throw new Error('ScreenRecorder or SimpleScreenRecorderStatus not found. Check package exports.');
                 }}
 
                 const startButton = document.getElementById('startRecordButtonSSR');
                 const stopButton = document.getElementById('stopRecordButtonSSR');
                 const recorderStatusEl = document.getElementById('recorderStatusSSR');
-                const uploadStatusEl = document.getElementById('uploadStatusSSR');
+                const actionStatusEl = document.getElementById('actionStatusSSR');
                 const videoPreviewEl = document.getElementById('videoPreviewSSR');
-                // const downloadButton = document.getElementById('downloadButtonSSR'); // If using manual download button
 
-                const sessionId = "{st.session_state.current_session_id}";
-                const screencastUploadUrl = "{SCREENCAST_UPLOAD_URL}";
+                const sessionId = "{st.session_state.current_session_id}"; // For context, not for upload URL here
+
                 let currentRecorderBlob = null;
-                let currentFilename = "screen-recording.webm"; // Default/fallback filename
+                let currentFilename = "screen-recording.webm";
 
                 const recorder = new ScreenRecorder({{
                     onStatusChange: (status, details) => {{
@@ -155,64 +128,36 @@ with st.sidebar:
                         }}
                         startButton.disabled = status === SimpleScreenRecorderStatus.RECORDING || status === SimpleScreenRecorderStatus.REQUESTING_PERMISSION;
                         stopButton.disabled = status !== SimpleScreenRecorderStatus.RECORDING;
-
-                        if(status === SimpleScreenRecorderStatus.IDLE || status === SimpleScreenRecorderStatus.STOPPED) {{
-                            // uploadStatusEl.textContent = ""; // Cleared more explicitly on start
-                            if (status === SimpleScreenRecorderStatus.STOPPED && !currentRecorderBlob) {{
-                                recorderStatusEl.textContent += " (No data recorded or error before blob creation)";
-                            }}
+                        if (status !== SimpleScreenRecorderStatus.STOPPED) {{
+                           actionStatusEl.textContent = "";
                         }}
-                        // if (downloadButton && status !== SimpleScreenRecorderStatus.RECORDING && status !== SimpleScreenRecorderStatus.STOPPED) {{
-                        //     downloadButton.style.display = 'none';
-                        // }}
                         recorderStatusEl.style.color = (status === SimpleScreenRecorderStatus.ERROR || status === SimpleScreenRecorderStatus.PERMISSION_DENIED) ? "red" : "inherit";
                     }},
-                    onRecordingComplete: async (blob, filename) => {{
+                    onRecordingComplete: (blob, filename) => {{
                         currentRecorderBlob = blob;
                         currentFilename = filename;
                         const blobUrl = URL.createObjectURL(blob);
                         videoPreviewEl.src = blobUrl;
                         videoPreviewEl.style.display = 'block';
 
-                        recorderStatusEl.textContent = "Status: Stopped. Uploading video...";
-                        uploadStatusEl.textContent = "Uploading...";
-                        uploadStatusEl.style.color = "orange";
-
-                        const formData = new FormData();
-                        formData.append('session_id', sessionId);
-                        formData.append('screencast_file', blob, filename);
+                        recorderStatusEl.textContent = "Status: Stopped. Preparing download...";
+                        actionStatusEl.textContent = "";
 
                         try {{
-                            const response = await fetch(screencastUploadUrl, {{ method: 'POST', body: formData }});
-                            const result = await response.json(); // Assuming server always returns JSON
-
-                            if (response.ok) {{
-                                uploadStatusEl.textContent = `Upload: ${{result.message || 'Success!'}} (Server File: ${{result.filename || filename}})`;
-                                uploadStatusEl.style.color = "green";
-                                recorderStatusEl.textContent = "Status: Idle. Upload Complete.";
-
-                                // Download the blob after successful upload
-                                if (ScreenRecorder && currentRecorderBlob && currentFilename) {{
-                                    ScreenRecorder.downloadBlob(currentRecorderBlob, currentFilename);
-                                    uploadStatusEl.textContent += " File downloaded.";
-                                    console.log(`Download initiated for ${{currentFilename}}`);
-                                }} else {{
-                                    console.warn("ScreenRecorder class or blob not available for download after upload.");
-                                }}
-                                // if (downloadButton) downloadButton.style.display = 'block'; // If manual download button used
+                            if (ScreenRecorder && currentRecorderBlob && currentFilename) {{
+                                ScreenRecorder.downloadBlob(currentRecorderBlob, currentFilename);
+                                actionStatusEl.textContent = `Download of '${{currentFilename}}' initiated. Check browser downloads.`;
+                                actionStatusEl.style.color = "green";
+                                console.log(`Client-side download initiated for ${{currentFilename}}`);
                             }} else {{
-                                uploadStatusEl.textContent = `Upload Error: ${{result.detail || result.message || response.statusText || 'Unknown server error'}}`;
-                                uploadStatusEl.style.color = "red";
-                                recorderStatusEl.textContent = "Status: Upload Failed.";
-                                // if (downloadButton) downloadButton.style.display = 'block'; // Allow local download even if upload fails
+                                throw new Error("Recorder utilities or blob not available for download.");
                             }}
-                        }} catch (error) {{
-                            console.error('Screencast upload fetch error:', error);
-                            uploadStatusEl.textContent = `Upload Fetch Error: ${{error.message}}`;
-                            uploadStatusEl.style.color = "red";
-                            recorderStatusEl.textContent = "Status: Upload Failed (Network/Script Error).";
-                            // if (downloadButton) downloadButton.style.display = 'block'; // Allow local download on network error
+                        }} catch (downloadError) {{
+                            console.error("Client-side download error:", downloadError);
+                            actionStatusEl.textContent = `Error initiating download: ${{downloadError.message}}`;
+                            actionStatusEl.style.color = "red";
                         }}
+                        recorderStatusEl.textContent = "Status: Idle. Download processed.";
                     }}
                 }});
 
@@ -220,40 +165,24 @@ with st.sidebar:
                     if (!sessionId) {{
                         recorderStatusEl.textContent = "Status: Error - Streamlit Session ID missing.";
                         recorderStatusEl.style.color = "red";
+                        startButton.disabled = true; // Disable if no session
                         return;
                     }}
                     videoPreviewEl.style.display = 'none';
-                    if (videoPreviewEl.src && videoPreviewEl.src.startsWith('blob:')) {{ // only revoke blob URLs
+                    if (videoPreviewEl.src && videoPreviewEl.src.startsWith('blob:')) {{
                         URL.revokeObjectURL(videoPreviewEl.src);
                     }}
-                    videoPreviewEl.src = ''; // Clear src
+                    videoPreviewEl.src = '';
                     currentRecorderBlob = null;
-                    // if (downloadButton) downloadButton.style.display = 'none';
-                    if (uploadStatusEl) uploadStatusEl.textContent = ''; // Clear previous upload status
+                    actionStatusEl.textContent = '';
 
-                    try {{
-                        await recorder.startRecording();
-                    }} catch (err) {{
-                        // Errors are usually handled by onStatusChange
-                        console.error("Error explicitly caught from recorder.startRecording() call:", err);
-                    }}
+                    try {{ await recorder.startRecording(); }}
+                    catch (err) {{ console.error("Error from recorder.startRecording() call:", err); }}
                 }};
 
-                stopButton.onclick = () => {{
-                    recorder.stopRecording();
-                }};
+                stopButton.onclick = () => {{ recorder.stopRecording(); }};
 
-                // if (downloadButton) {{ // If using manual download button
-                //     downloadButton.onclick = () => {{
-                //         if (ScreenRecorder && currentRecorderBlob && currentFilename) {{
-                //             ScreenRecorder.downloadBlob(currentRecorderBlob, currentFilename);
-                //         }} else {{
-                //             alert("No recording available to download, or recorder not initialized.");
-                //         }}
-                //     }};
-                // }}
-
-                if (!sessionId) {{
+                if (!sessionId) {{ // Initial check
                      recorderStatusEl.textContent = "Status: Error - Streamlit session ID invalid or missing.";
                      recorderStatusEl.style.color = "red";
                      startButton.disabled = true;
@@ -262,17 +191,18 @@ with st.sidebar:
             }} catch (err) {{
                 console.error("Failed to load or initialize ScreenRecorder from CDN: ", err);
                 if (rootElSSR) {{
-                    rootElSSR.innerHTML = `<p style='color:red;'><b>Error loading screen recorder component:</b><br/>${{err.message}}.<br/>Target Package: '<b>${PACKAGE_NAME}</b>@<b>${PACKAGE_VERSION}</b>'</p><p>Attempted CDN URL: {cdn_url}</p><p>Please check if the package is published correctly, the name/version are correct, and there are no network issues. Open browser console (F12) for more details.</p>`;
+                    rootElSSR.innerHTML = `<p style='color:red;'><b>Error loading screen recorder:</b><br/>${{err.message}}.<br/>Package: '<b>${PACKAGE_NAME}</b>@<b>${PACKAGE_VERSION}</b>'</p><p>CDN URL: {cdn_url}</p><p>Check browser console (F12).</p>`;
                 }}
             }}
         </script>
         """
-        components.html(html_component, height=400, scrolling=False) # Adjusted height for video preview
+        components.html(html_component, height=400, scrolling=False)
 
     else:
         st.sidebar.info("Upload a data file to enable screen recording and other features.")
 
 # --- Main Chat Interface ---
+# ... (The rest of your Streamlit app_streamlit.py code for chat, etc. - THIS REMAINS THE SAME) ...
 st.header("2. Chat with Your Data")
 
 for i, msg_obj in enumerate(st.session_state.messages):
@@ -535,8 +465,8 @@ if prompt := st.chat_input(
                     if http_err_main.response
                     else str(http_err_main)
                 )
-            except:
-                error_detail_main = str(http_err_main)
+            except: # Fallback if response is not JSON
+                error_detail_main = http_err_main.response.text if http_err_main.response and http_err_main.response.text else str(http_err_main)
             err_msg = f"Query failed (HTTP {http_err_main.response.status_code if http_err_main.response else 'Unknown'}): {error_detail_main}"
             st.error(err_msg)
             assistant_response_for_history["content"] = err_msg
