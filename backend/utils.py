@@ -30,16 +30,16 @@ def _reshape_for_stacked_bar(df: pd.DataFrame, x_col: str, y_col: Optional[str],
 
 def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[str]:
     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    print("UTILS_GENERATE_PLOT: NATIVE PLOTLY + MPL w/ TRACE DATA ALIGNMENT V5")
+    print("UTILS_GENERATE_PLOT: NATIVE PLOTLY + MPL w/ TRACE DATA ALIGNMENT V6 (Native PX Bar)")
     print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
     print(f"UTILS_GENERATE_PLOT: Received config: {config.model_dump_json(indent=0)}")
 
     if df.empty: print("UTILS_GENERATE_PLOT_ERROR: DataFrame is empty."); return None
 
     actual_plot_type = config.plot_type
-    if config.plot_type == "auto_categorical": actual_plot_type = "bar"
+    if config.plot_type == "auto_categorical": actual_plot_type = "bar" # auto_categorical defaults to bar
 
-    # --- NATIVE PLOTLY PATHS (Boxplot, Histogram) ---
+    # --- NATIVE PLOTLY PATHS ---
     if actual_plot_type == "boxplot":
         print("UTILS_NATIVE_PLOTLY: BOXPLOT with Plotly Express.")
         try:
@@ -97,13 +97,117 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
                 title_text=final_main_title,
                 xaxis_title_text=final_x_label,
                 yaxis_title_text=final_y_label,
-                bargap=0.1 if not current_color_col else 0.2,
+                bargap=0.1 if not current_color_col else 0.2, # Default for histogram
                 legend_title_text=final_legend_title if current_color_col else None
             )
             return pio.to_json(plotly_fig_native)
         except Exception as e_native_px_hist: print(f"UTILS_NATIVE_PLOTLY_HIST_ERROR: {e_native_px_hist}"); traceback.print_exc(); return None
 
-    # --- MATPLOTLIB/SEABORN PATH FOR OTHER PLOTS ---
+    elif actual_plot_type == "bar":
+        print("UTILS_NATIVE_PLOTLY: BAR CHART with Plotly Express.")
+        try:
+            if not config.x_column or config.x_column not in df.columns:
+                print(f"UTILS_NATIVE_PLOTLY_BAR_ERROR: Bar chart needs valid x_column ('{config.x_column}').")
+                return None
+
+            current_x_col = config.x_column
+            current_y_col_config = config.y_column
+            current_color_col = config.color_by_column if config.color_by_column and config.color_by_column in df.columns else None
+            
+            num_x_categories = df[current_x_col].nunique()
+            
+            plot_df = df.copy() 
+            y_axis_label_final = config.ylabel 
+            y_col_for_plot = current_y_col_config
+            is_count_plot = False
+
+            if not y_col_for_plot: 
+                print(f"UTILS_NATIVE_PLOTLY_BAR: Y-column not specified, creating a count plot for x='{current_x_col}'.")
+                is_count_plot = True
+                count_col_name = '_count_'
+                group_by_cols = [current_x_col]
+                if current_color_col:
+                    group_by_cols.append(current_color_col)
+                
+                temp_counts_df = df.groupby(group_by_cols, observed=True).size().reset_index(name=count_col_name)
+                plot_df = temp_counts_df 
+                y_col_for_plot = count_col_name
+                if not y_axis_label_final: y_axis_label_final = "Count"
+            
+            elif current_y_col_config and current_y_col_config in df.columns:
+                if not pd.api.types.is_numeric_dtype(df[current_y_col_config]):
+                    print(f"UTILS_NATIVE_PLOTLY_BAR_WARN: Specified Y-column '{current_y_col_config}' is not numeric. Fallback to count plot on X.")
+                    is_count_plot = True
+                    count_col_name = '_count_fallback_'
+                    group_by_cols = [current_x_col]
+                    if current_color_col: group_by_cols.append(current_color_col)
+                    temp_counts_df = df.groupby(group_by_cols, observed=True).size().reset_index(name=count_col_name)
+                    plot_df = temp_counts_df
+                    y_col_for_plot = count_col_name
+                    if not y_axis_label_final: y_axis_label_final = "Count"
+                else:
+                    if not y_axis_label_final: y_axis_label_final = y_col_for_plot
+            else: 
+                print(f"UTILS_NATIVE_PLOTLY_BAR_ERROR: Specified y_column '{current_y_col_config}' not in DataFrame or invalid. Cannot plot.")
+                return None
+
+            barmode_setting = 'group' 
+            if config.bar_style == "stacked":
+                barmode_setting = 'stack'
+            elif config.bar_style == "grouped":
+                barmode_setting = 'group'
+            elif current_color_col: 
+                barmode_setting = 'group' 
+            else: 
+                barmode_setting = 'relative'
+
+            final_main_title = config.title or f"Bar Chart of {current_x_col}{(' by ' + current_color_col) if current_color_col else ''}"
+            final_x_label = config.xlabel or current_x_col
+            final_legend_title = current_color_col 
+
+            plotly_fig_native = px.bar(
+                plot_df, 
+                x=current_x_col, 
+                y=y_col_for_plot, 
+                color=current_color_col,
+                barmode=barmode_setting
+            )
+            
+            tickangle_setting = 0
+            categoryorder_setting = 'trace' 
+            if is_count_plot:
+                 # For count plots, sorting by frequency (total count) is often best
+                categoryorder_setting = 'total descending'
+            
+            # Update X-axis
+            x_axis_layout = {
+                "title_text": final_x_label,
+                "type": 'category', 
+                "categoryorder": categoryorder_setting
+            }
+
+            if num_x_categories > 8 and num_x_categories <= 20: # Adjusted threshold
+                tickangle_setting = -45
+            elif num_x_categories > 20: # Adjusted threshold
+                tickangle_setting = -60 # Slightly less extreme than -90 initially
+            
+            if tickangle_setting != 0:
+                x_axis_layout["tickangle"] = tickangle_setting
+            
+            plotly_fig_native.update_layout(
+                title_text=final_main_title,
+                xaxis=x_axis_layout,
+                yaxis_title_text=y_axis_label_final,
+                legend_title_text=final_legend_title if current_color_col else None,
+                bargap=0.2 # Default gap for bar charts
+            )
+            return pio.to_json(plotly_fig_native)
+        except Exception as e_native_px_bar:
+            print(f"UTILS_NATIVE_PLOTLY_BAR_ERROR: {e_native_px_bar}")
+            traceback.print_exc()
+            return None
+
+    # --- MATPLOTLIB/SEABORN PATH FOR OTHER PLOTS (KDE, Line, Scatter) ---
     print(f"UTILS_MPL_PLOT: Matplotlib path for plot type: '{actual_plot_type}'")
     fig_width=10; fig_height=6; xtick_rotation=0; xtick_ha='center'; xtick_fontsize=10
     final_rect_bottom_margin=0.12; final_rect_right_margin=0.95; num_x_categories=0
@@ -112,15 +216,20 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
     current_y_col_mpl = config.y_column
     current_color_col_mpl = config.color_by_column
 
-    if current_x_col_mpl and current_x_col_mpl in df.columns: num_x_categories = df[current_x_col_mpl].nunique()
-    elif actual_plot_type in ["bar","kde","line","scatter"]: print(f"UTILS_MPL_ERR: X-col missing/not found for '{actual_plot_type}'."); return None
+    # X-column is essential for these Matplotlib plot types
+    if actual_plot_type in ["kde", "line", "scatter"]: # Bar removed from this check
+        if current_x_col_mpl and current_x_col_mpl in df.columns:
+            num_x_categories = df[current_x_col_mpl].nunique()
+        else:
+            print(f"UTILS_MPL_ERR: X-col missing/not found for '{actual_plot_type}'."); return None
     
-    if actual_plot_type == "bar": 
-        xtick_fontsize=9
-        if num_x_categories > 8: fig_width,fig_height,xtick_rotation,xtick_ha,final_rect_bottom_margin=max(10,min(num_x_categories*0.7,35)),max(6.5,min(6+num_x_categories*0.1,12)),45,'right',0.20
-        if num_x_categories > 15: fig_width,fig_height,xtick_fontsize,final_rect_bottom_margin=max(12,min(num_x_categories*0.8,40)),max(7,min(6+num_x_categories*0.15,15)),8,0.25
-        if num_x_categories > 25: xtick_rotation,final_rect_bottom_margin=60,0.30
-    elif actual_plot_type == "kde": fig_width,fig_height,final_rect_bottom_margin=12,7,0.15
+    # Specific sizing adjustments (Bar chart sizing removed from here)
+    if actual_plot_type == "kde":
+        fig_width,fig_height,final_rect_bottom_margin=12,7,0.15
+    elif actual_plot_type == "line" and num_x_categories > 15: # Example for line if many points
+        xtick_rotation = 30
+        final_rect_bottom_margin = 0.18
+
 
     print(f"UTILS_MPL_PLOT: type='{actual_plot_type}', fig_w={fig_width}, fig_h={fig_height}, rot={xtick_rotation}")
     plt.style.use('seaborn-v0_8-whitegrid'); fig, ax = plt.subplots(figsize=(fig_width, fig_height))
@@ -130,25 +239,8 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
         if current_color_col_mpl and current_color_col_mpl not in df.columns: print(f"UTILS_MPL_ERR: Color-col '{current_color_col_mpl}' not found."); plt.close(fig); return None
         plot_generated = False
         
-        # (Matplotlib plotting logic - this part remains the same as your presumed working version)
-        if actual_plot_type == "bar":
-            bar_style="grouped";num_hue_cats=0
-            if current_color_col_mpl: num_hue_cats=df[current_color_col_mpl].nunique()
-            if current_color_col_mpl and (num_hue_cats>=5 or (num_hue_cats>2 and num_x_categories>=8)): bar_style="stacked"
-            if bar_style=="stacked" and current_color_col_mpl:
-                y_param=current_y_col_mpl;
-                if current_y_col_mpl and not pd.api.types.is_numeric_dtype(df[current_y_col_mpl]): y_param=None
-                reshaped=_reshape_for_stacked_bar(df,current_x_col_mpl,y_param,current_color_col_mpl,np.sum)
-                if reshaped is not None and not reshaped.empty: reshaped.plot(kind='bar',stacked=True,ax=ax,width=0.8); plot_generated=True
-                else: bar_style="grouped" 
-            if bar_style=="grouped" or not plot_generated:
-                if current_y_col_mpl:
-                    if not pd.api.types.is_numeric_dtype(df[current_y_col_mpl]): sns.countplot(data=df,x=current_x_col_mpl,hue=current_color_col_mpl,ax=ax)
-                    else: sns.barplot(data=df,x=current_x_col_mpl,y=current_y_col_mpl,hue=current_color_col_mpl,estimator=np.sum,ax=ax)
-                else: 
-                    sns.countplot(data=df,x=current_x_col_mpl,hue=current_color_col_mpl,ax=ax)
-                plot_generated=True
-        elif actual_plot_type == "kde":
+        # Matplotlib plotting logic - Bar chart plotting removed from here
+        if actual_plot_type == "kde":
             if not pd.api.types.is_numeric_dtype(df[current_x_col_mpl]): print(f"UTILS_MPL_ERR: KDE needs numeric X-col."); plt.close(fig);return None
             sns.kdeplot(data=df, x=current_x_col_mpl, hue=current_color_col_mpl, fill=False, linewidth=2, ax=ax); plot_generated=True
         elif actual_plot_type == "line": 
@@ -165,13 +257,17 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
             plot_generated=True
         elif actual_plot_type == "scatter": 
             if not current_y_col_mpl: print(f"UTILS_MPL_ERR: Scatter needs Y-col."); plt.close(fig);return None
+            if not pd.api.types.is_numeric_dtype(df[current_x_col_mpl]) or not pd.api.types.is_numeric_dtype(df[current_y_col_mpl]):
+                 print(f"UTILS_MPL_ERR: Scatter needs numeric X and Y columns."); plt.close(fig);return None
             sns.scatterplot(data=df,x=current_x_col_mpl,y=current_y_col_mpl,hue=current_color_col_mpl,ax=ax);plot_generated=True
-        if not plot_generated: print(f"UTILS_MPL_ERR: Plot not generated for type '{actual_plot_type}'."); plt.close(fig); return None
+        
+        if not plot_generated:
+             print(f"UTILS_MPL_ERR: Plot not generated for type '{actual_plot_type}'. Could be an unhandled type or error in specific plot logic.");
+             plt.close(fig); return None
 
-        # (Matplotlib label and tick setup - this part remains the same)
         mpl_def_y_lab="Value"
-        if actual_plot_type=='bar' and not current_y_col_mpl: mpl_def_y_lab="Count"
-        elif actual_plot_type=='kde': mpl_def_y_lab="Density"
+        # Removed bar-specific default y-label
+        if actual_plot_type=='kde': mpl_def_y_lab="Density"
         
         mpl_final_main_title = config.title or f"{actual_plot_type.capitalize()} Plot of {current_x_col_mpl if current_x_col_mpl else 'Data'}"
         mpl_final_x_label = config.xlabel or current_x_col_mpl or ""
@@ -182,14 +278,15 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
         ax.set_ylabel(mpl_final_y_label, fontsize=12)
         
         unique_x_categories_for_mpl_ticks = []
-        if actual_plot_type in ["bar", "line"] and current_x_col_mpl and current_x_col_mpl in df.columns:
+        # Bar chart tick handling removed from here
+        if actual_plot_type in ["line"] and current_x_col_mpl and current_x_col_mpl in df.columns: # Adjusted this condition
             unique_x_categories_for_mpl_ticks = sorted(df[current_x_col_mpl].dropna().unique())
             if 0 < len(unique_x_categories_for_mpl_ticks) <= 50: 
                 if pd.api.types.is_numeric_dtype(df[current_x_col_mpl]):
                     ax.set_xticks(unique_x_categories_for_mpl_ticks)
                     ax.set_xticklabels([str(int(v)) if v == round(v) else f"{v:.2f}" if isinstance(v, float) else str(v) for v in unique_x_categories_for_mpl_ticks], rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
                 else: 
-                    ax.set_xticks(range(len(unique_x_categories_for_mpl_ticks))) # Use indices for string categories
+                    ax.set_xticks(range(len(unique_x_categories_for_mpl_ticks))) 
                     ax.set_xticklabels([str(v) for v in unique_x_categories_for_mpl_ticks], rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
                 print(f"UTILS_MPL_PLOT: Set custom MPL ticks for X: '{current_x_col_mpl}'")
             else: 
@@ -224,17 +321,10 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
             
             if current_color_col_mpl:
                 update_layout_dict['legend_title_text'] = current_color_col_mpl
-
-            if actual_plot_type == "bar":
-                current_bargap_from_conversion = plotly_fig_obj.layout.bargap
-                if not isinstance(current_bargap_from_conversion, (int, float)) or \
-                   not (0 <= float(current_bargap_from_conversion) <= 1):
-                    update_layout_dict['bargap'] = 0.2
             
-            if actual_plot_type in ["bar", "line"] and current_x_col_mpl and current_x_col_mpl in df.columns:
-                # Use the same unique_x_categories_for_mpl_ticks determined earlier for consistency
-                # If it was empty (e.g., >50 categories, or not bar/line), this logic won't run for categoryarray
-                if unique_x_categories_for_mpl_ticks:
+            # Bar chart specific conversion fixes removed as bar charts are now native Plotly
+            if actual_plot_type in ["line"] and current_x_col_mpl and current_x_col_mpl in df.columns:
+                if unique_x_categories_for_mpl_ticks: # From earlier logic
                     plotly_categories = [str(v) for v in unique_x_categories_for_mpl_ticks]
                     print(f"UTILS_MPL_PLOT_POST_CONV: Forcing Plotly x-axis: type='category', categoryarray for '{current_x_col_mpl}'.")
                     
@@ -246,36 +336,15 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
                     if xtick_rotation != 0: update_layout_dict['xaxis_tickangle'] = -xtick_rotation
                     else: update_layout_dict['xaxis_tickangle'] = None
                     
-                    # --- START: CRITICAL TRACE DATA ALIGNMENT ---
                     if plotly_fig_obj.data:
                         for trace in plotly_fig_obj.data:
                             if hasattr(trace, 'x') and trace.x is not None:
-                                # If the original x-data in MPL was numeric and represented these categories,
-                                # mpl_to_plotly might have kept them numeric or as simple indices.
-                                # We now need to ensure trace.x aligns with `plotly_categories`.
-                                # This is simpler for countplot-like scenarios (one bar per category).
-                                # For grouped bars, mpl_to_plotly handles x-offsets, and this might be more complex.
-                                
-                                # For a simple bar chart (like countplot from sns.countplot),
-                                # len(trace.x) should match len(plotly_categories).
                                 if len(trace.x) == len(plotly_categories):
                                     print(f"UTILS_MPL_PLOT_POST_CONV: Aligning trace x-data with string categories for '{current_x_col_mpl}'.")
                                     trace.x = plotly_categories
-                                elif actual_plot_type == "bar" and not current_y_col_mpl and not current_color_col_mpl: # Simple countplot
-                                    # If sns.countplot was used without hue, there's usually one trace.
-                                    # Its x values from mpl_to_plotly might be 0, 1, 2... or the actual numeric categories.
-                                    # If they are 0,1,2... and len matches, we can map.
-                                    is_simple_indices = all(isinstance(val, (int, float)) and round(val) == val and 0 <= val < len(plotly_categories) for val in trace.x)
-                                    if is_simple_indices and len(trace.x) == len(plotly_categories):
-                                         print(f"UTILS_MPL_PLOT_POST_CONV: sns.countplot simple case: Aligning trace x-data to string categories.")
-                                         trace.x = plotly_categories # Direct assignment
-                                    else:
-                                         print(f"UTILS_MPL_PLOT_POST_CONV_WARN: Trace x-data for '{current_x_col_mpl}' (len {len(trace.x)}) "
-                                              f"does not directly match categoryarray (len {len(plotly_categories)}). Bars might be misaligned/missing. Original trace.x: {trace.x[:5]}")
                                 else:
-                                    print(f"UTILS_MPL_PLOT_POST_CONV_WARN: Complex case or length mismatch for trace x-data alignment for plot type '{actual_plot_type}'. "
-                                          f"Trace.x len: {len(trace.x)}, Categories len: {len(plotly_categories)}. Relaying on Plotly's category mapping. Original trace.x: {trace.x[:5]}")
-                    # --- END: CRITICAL TRACE DATA ALIGNMENT ---
+                                    print(f"UTILS_MPL_PLOT_POST_CONV_WARN: Trace x-data for '{current_x_col_mpl}' (len {len(trace.x)}) "
+                                          f"does not directly match categoryarray (len {len(plotly_categories)}). Original trace.x: {trace.x[:5]}")
             
             plotly_fig_obj.update_layout(**update_layout_dict)
             
@@ -301,12 +370,14 @@ def calculate_age_from_dob(df: pd.DataFrame, dob_column_name: str) -> Optional[p
             dob_s_df = pd.to_datetime(df[dob_column_name], dayfirst=True, errors='coerce')
             if dob_s_df.notna().sum() > 0 and (dob_s.notna().sum()==0 or dob_s_df.notna().sum()>dob_s.notna().sum()): dob_s=dob_s_df; print("UTILS: Used dayfirst parse for DOB.")
         if dob_s.isnull().all(): print(f"UTILS_DOB_ERR: Cannot parse dates from '{dob_column_name}'."); return None
-        if dob_s.notnull().sum()==0: return None
+        if dob_s.notnull().sum()==0: return None # Should be redundant due to previous check
         today=pd.Timestamp(datetime.today()); age=today.year-dob_s.dt.year
+        # Account for month/day for exact age
         mask=(dob_s.dt.month>today.month)|((dob_s.dt.month==today.month)&(dob_s.dt.day>today.day))
-        age=age-mask.astype(int).where(dob_s.notna(),pd.NA); age=age.astype('Int64')
+        age=age-mask.astype(int).where(dob_s.notna(),pd.NA); # Ensure NA for NA DOBs
+        age=age.astype('Int64') # Use nullable integer type
         if age.notnull().any():
-            stats=age.dropna().astype(float) 
+            stats=age.dropna().astype(float) # For stats, drop NA and convert to float
             if not stats.empty: print(f"UTILS: Age stats for '{dob_column_name}': min={stats.min()}, max={stats.max()}, mean={stats.mean():.1f}")
         return age
     except Exception as e: print(f"UTILS_DOB_EXC: {e} for '{dob_column_name}'"); traceback.print_exc(); return None
