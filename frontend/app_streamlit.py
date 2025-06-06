@@ -13,7 +13,7 @@ import streamlit.components.v1 as components
 # --- Environment Variable Loading ---
 dotenv_path_streamlit = os.path.join(os.path.dirname(__file__), '..', '.env')
 if not os.path.exists(dotenv_path_streamlit):
-    dotenv_path_streamlit = os.path.join(os.path.dirname(__file__), '.env') 
+    dotenv_path_streamlit = os.path.join(os.path.dirname(__file__), '.env')
 load_dotenv(dotenv_path_streamlit)
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
@@ -22,20 +22,29 @@ if not BACKEND_BASE_URL:
     st.error("FATAL ERROR: BACKEND_BASE_URL environment variable not set.")
     st.stop()
 
-UPLOAD_URL = f"{BACKEND_BASE_URL.rstrip('/')}/uploadfile/"
+# --- URLs (Backend interaction for screencast is now REMOVED) ---
+UPLOAD_DATA_URL = f"{BACKEND_BASE_URL.rstrip('/')}/uploadfile/"
 PROCESS_QUERY_URL = f"{BACKEND_BASE_URL.rstrip('/')}/process_query/"
+# UPLOAD_CLIENT_CONVERTED_SCREENCAST_URL is REMOVED
 
 # --- Initialize session state variables ---
 default_session_vars = {
     "messages": [], "current_session_id": None, "df_columns": [], "df_head": "",
-    "current_filename": "", "plot_key_counter": 0,
-    "show_recorder_ui_modal": False, 
-    "show_next_steps_screencast_modal": False, 
-    "screencast_blob_url_for_preview": None, 
-    "screencast_filename_from_js": "advanced-screen-recording.webm",
-    "audio_enabled_for_js_recorder": True, 
+    "current_data_filename": "", "plot_key_counter": 0,
+    "show_recorder_ui_modal": False,
+    "show_next_steps_screencast_modal": False,
+    "screencast_local_blob_url_for_preview": None,
+    "screencast_final_filename_from_js": "screen-recording.webm",
+    "audio_enabled_for_js_recorder": True,
     "recorder_component_value": None,
-    "current_max_recording_time": None # Added for timed recordings
+    "current_max_recording_time": None,
+    "selected_target_format_for_js": "webm", # "webm", "mp4", "mkv" - what JS should try to make
+    "popover_selected_format_radio": "webm", # Tracks the radio: 'webm', 'mp4', 'mkv'
+    # Server upload related states are REMOVED as we are not uploading screencasts
+    # "server_upload_status": "idle",
+    # "server_uploaded_file_info": None,
+    # "last_upload_error_message": None,
+    "recorder_component_value_processed_id": None,
 }
 for key, value in default_session_vars.items():
     if key not in st.session_state:
@@ -44,209 +53,215 @@ for key, value in default_session_vars.items():
 # --- Page Configuration ---
 st.set_page_config(layout="wide", page_title="Conversational Data Agent")
 
-
 # --- Main App Area ---
-header_cols = st.columns([0.8, 0.2]) 
+header_cols = st.columns([0.8, 0.2])
 with header_cols[0]:
     st.title("📊 Conversational Data Analysis Agent")
 
 with header_cols[1]:
     if st.session_state.current_session_id:
-        # --- MODIFIED: Replaced single button with a popover for time limits ---
         with st.popover("🎬 Record Screencast", use_container_width=True):
-            st.markdown("**Select recording duration:**")
-            
-            def set_recording_params(max_time=None):
+            st.markdown("**1. Select Desired Output Format:**")
+            st.session_state.popover_selected_format_radio = st.radio(
+                "Recording Format (Browser will attempt to generate):",
+                options=["webm", "mp4", "mkv"],
+                format_func=lambda x: {
+                    "webm": "WebM (Recommended, Direct Download)",
+                    "mp4": "MP4 (Browser Generation, Direct Download)",
+                    "mkv": "MKV (Browser Generation, Direct Download)"
+                }.get(x, x.upper()),
+                key="popover_format_radio_main_v3",
+                horizontal=True,
+                index=["webm", "mp4", "mkv"].index(st.session_state.get("popover_selected_format_radio", "webm"))
+            )
+
+            st.markdown("**2. Select Recording Duration:**")
+
+            def set_and_open_recorder_modal(max_time=None):
+                # The radio choice directly becomes the target format for JS
+                st.session_state.selected_target_format_for_js = st.session_state.popover_selected_format_radio
+
                 st.session_state.current_max_recording_time = max_time
                 st.session_state.show_recorder_ui_modal = True
-                st.session_state.show_next_steps_screencast_modal = False 
-                st.session_state.screencast_blob_url_for_preview = None 
-                # st.rerun() # Rerun will be triggered by Streamlit implicitly after button click
+                st.session_state.show_next_steps_screencast_modal = False
+                st.session_state.screencast_local_blob_url_for_preview = None
+                # No server upload states to reset
 
-            if st.button("No Limit", key="record_no_limit_popover", use_container_width=True, on_click=set_recording_params, args=(None,)):
-                pass # on_click handles the logic
-            if st.button("15 Seconds", key="record_15s_popover", use_container_width=True, on_click=set_recording_params, args=(15,)):
-                pass
-            if st.button("30 Seconds", key="record_30s_popover", use_container_width=True, on_click=set_recording_params, args=(30,)):
-                pass
-            if st.button("1 Minute", key="record_1m_popover", use_container_width=True, on_click=set_recording_params, args=(60,)):
-                pass
+            time_limit_buttons_col1, time_limit_buttons_col2 = st.columns(2)
+            current_radio_format_key_suffix = st.session_state.popover_selected_format_radio
+
+            with time_limit_buttons_col1:
+                st.button("No Limit", key=f"record_nolimit_{current_radio_format_key_suffix}_v3", use_container_width=True, on_click=set_and_open_recorder_modal, args=(None,))
+                st.button("30 Seconds", key=f"record_30s_{current_radio_format_key_suffix}_v3", use_container_width=True, on_click=set_and_open_recorder_modal, args=(30,))
+            with time_limit_buttons_col2:
+                st.button("15 Seconds", key=f"record_15s_{current_radio_format_key_suffix}_v3", use_container_width=True, on_click=set_and_open_recorder_modal, args=(15,))
+                st.button("1 Minute", key=f"record_1m_{current_radio_format_key_suffix}_v3", use_container_width=True, on_click=set_and_open_recorder_modal, args=(60,))
     else:
         st.caption("Upload data to enable screencast.")
 
 
-# --- MODAL 1: Record a Screencast UI (using your JS component) ---
+# --- MODAL 1: Record a Screencast UI ---
 if st.session_state.show_recorder_ui_modal and st.session_state.current_session_id:
     with st.container():
         st.markdown("<div class='modal-box'>", unsafe_allow_html=True)
-
         m_header, m_close = st.columns([0.9, 0.1])
         with m_header:
             st.subheader("⏺️ Record a screencast")
         with m_close:
-            if st.button("✖", key="close_recorder_ui_modal", help="Close Recorder UI"):
+            if st.button("✖", key="close_recorder_ui_modal_comp_v3", help="Close Recorder UI"):
                 st.session_state.show_recorder_ui_modal = False
                 st.rerun()
-        
-        st.write("This will record your screen using the browser. Ensure you grant necessary permissions.")
+
+        st.write("Grant screen sharing permissions. A 3s countdown appears after selection.")
         st.session_state.audio_enabled_for_js_recorder = st.checkbox(
             "🎤 Also record audio",
             value=st.session_state.audio_enabled_for_js_recorder,
-            key="audio_for_js_recorder_checkbox"
+            key="audio_for_js_recorder_checkbox_comp_modal_v3"
         )
-        
-        # --- Get current max recording time for JS ---
+
         max_rec_time_py = st.session_state.get("current_max_recording_time")
+        target_format_for_js = st.session_state.get("selected_target_format_for_js", "webm")
+
+        format_display_name_map = {
+            "webm": "WebM (Recommended)",
+            "mp4": "MP4 (Browser will attempt generation)",
+            "mkv": "MKV (Browser will attempt generation)"
+        }
+        format_display_name = format_display_name_map.get(target_format_for_js, "Unknown Format")
+
+        caption_text = f"Target Format: **{format_display_name.upper()}**. Your browser will attempt to generate this format."
         if max_rec_time_py:
-            st.caption(f"Recording will be limited to {max_rec_time_py} seconds. Download is direct from browser.")
+            caption_text += f" Time Limit: **{max_rec_time_py}s**."
         else:
-            st.caption("Recording has no time limit. Download is direct from browser.")
+            caption_text += " No time limit."
+        caption_text += " The video will be downloaded directly to your computer after recording."
+        st.caption(caption_text)
 
+        js_component_params = {
+            "audio": st.session_state.audio_enabled_for_js_recorder,
+            "timeLimit": max_rec_time_py,
+            "delay": 3,
+            "format": target_format_for_js, # "webm", "mp4", "mkv" - what JS recorder should try to make
+            # "processingStrategy" and "uploadUrl" are REMOVED as all are direct downloads
+        }
 
-        PACKAGE_NAME = "advanced-screen-recorder" 
-        PACKAGE_VERSION = "0.1.0" 
-
-        if PACKAGE_NAME.startswith('@'):
-            cdn_url = f"https://cdn.jsdelivr.net/npm/{PACKAGE_NAME}@{PACKAGE_VERSION}/dist/index.js" 
-        else:
-            cdn_url = f"https://cdn.jsdelivr.net/npm/{PACKAGE_NAME}@{PACKAGE_VERSION}/+esm"
-
-        component_key = f"adv_ssr_component_{st.session_state.current_session_id}_{max_rec_time_py or 'nolimit'}"
+        component_instance_key = f"custom_ssr_instance_key_{st.session_state.current_session_id}_{target_format_for_js}_{max_rec_time_py or 'nolimit'}_v3"
 
         html_component = f"""
-        <div id="recorderInterfaceRootSSR_modal" style="font-family: sans-serif; padding: 10px; border: 1px solid #444; border-radius: 5px; background-color: #333; color: white;">
-            <p style="font-size:0.9em; margin-bottom:10px;">Click "Start Recording" below. Use "Stop" when finished.</p>
-            <button id="startRecordButtonSSR_modal" style="padding: 8px 12px; margin-right: 10px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Start Recording</button>
-            <button id="stopRecordButtonSSR_modal" style="padding: 8px 12px; background-color: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Stop Recording</button>
-            <p id="recorderStatusSSR_modal" style="margin-top: 10px; font-size: 0.9em;">Status: Idle</p>
-            <p id="actionStatusSSR_modal" style="font-size: 0.9em;"></p>
+        <div id="recorderInterfaceRootSSR_modal_v3" style="font-family: sans-serif; padding: 10px; border: 1px solid #444; border-radius: 5px; background-color: #333; color: white;">
+            <button id="startRecordButtonSSR_modal_v3" style="padding: 8px 12px; margin-right: 10px; color: white; border: none; border-radius: 4px; cursor: pointer; background-color: #4CAF50;">Start Recording</button>
+            <button id="stopRecordButtonSSR_modal_v3" style="padding: 8px 12px; margin-right: 10px; color: white; border: none; border-radius: 4px; cursor: pointer; background-color: #f44336;" disabled>Stop Recording</button>
+            <p id="countdownSSR_modal_v3" style="font-size: 1.5em; color: #FFA500; margin-top:10px; min-height:1.2em;"></p>
+            <p id="recorderStatusSSR_modal_v3" style="margin-top: 5px; font-size: 0.9em;">Status: Idle</p>
+            <p id="actionStatusSSR_modal_v3" style="font-size: 0.9em; min-height:1.2em;"></p>
+            {'''
+            <!-- Upload button is REMOVED -->
+            '''}
         </div>
 
         <script type="module">
-            const rootElSSR_modal = document.getElementById('recorderInterfaceRootSSR_modal');
-            let AdvancedScreenRecorder_modal, ASPlayerStatus_modal; 
+            // --- Embedded ScreenRecorder Class (from previous correct version) ---
+            class ScreenRecorder {{
+                constructor() {{ /* ... same definition as before ... */ this.mediaStream = null; this.mediaRecorder = null; this.recordedBlobs = []; this.timerInterval = null; this.countdownInterval = null; this.onRecordingStart = null; this.onRecordingStop = null; this.onCountdown = null; this.onError = null; this.onStatusUpdate = null; }}
+                _getMimeType(requestedFormat = 'webm') {{ /* ... same definition as before ... */ const format = requestedFormat.toLowerCase(); let preferredType = null; const types = {{ webm: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8,opus', 'video/webm;codecs=vp8', 'video/webm'], mp4: ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=h264', 'video/mp4'], mkv: ['video/x-matroska;codecs=avc1', 'video/x-matroska;codecs=vp9', 'video/x-matroska'] }}; const checkTypes = types[format] || types.webm; for (const type of checkTypes) {{ if (MediaRecorder.isTypeSupported(type)) {{ preferredType = type; break; }} }} if (!preferredType) {{ if (format === 'mp4' && MediaRecorder.isTypeSupported('video/mp4')) preferredType = 'video/mp4'; else if (MediaRecorder.isTypeSupported('video/webm')) preferredType = 'video/webm'; else {{ console.error("No suitable MIME type for MediaRecorder."); return {{ mimeType: null, fileExtension: 'unknown' }}; }} }} let fileExtension = format; if (preferredType.includes('mp4')) fileExtension = 'mp4'; else if (preferredType.includes('x-matroska')) fileExtension = 'mkv'; else if (preferredType.includes('webm')) fileExtension = 'webm'; console.log(`[Recorder] Requested: ${{format}}, Effective MIME: ${{preferredType}}, Extension: ${{fileExtension}}`); return {{ mimeType: preferredType, fileExtension: fileExtension }}; }}
+                async startRecording(options = {{}}) {{ /* ... same definition as before ... */ const {{ timeLimit = null, delay = 3, audio = true, format = 'webm' }} = options; if (this.mediaRecorder && this.mediaRecorder.state === "recording") {{ const err = new Error("Recording in progress."); if (this.onError) this.onError(err); return Promise.reject(err); }} this.recordedBlobs = []; if(this.onStatusUpdate) this.onStatusUpdate("Requesting screen permission..."); try {{ this.mediaStream = await navigator.mediaDevices.getDisplayMedia({{ video: true, audio: audio }}); this.mediaStream.getVideoTracks()[0].onended = () => {{ if(this.onStatusUpdate) this.onStatusUpdate("Screen sharing stopped by user."); this.stopRecording(false); }}; if (this.onCountdown) this.onCountdown(delay); let countdown = delay; return new Promise((resolve, reject) => {{ this.countdownInterval = setInterval(() => {{ countdown--; if (this.onCountdown) this.onCountdown(countdown); if (countdown <= 0) {{ clearInterval(this.countdownInterval); this.countdownInterval = null; try {{ this._initiateRecording(timeLimit, format); resolve(); }} catch (initError) {{ if (this.onError) this.onError(initError); this._cleanup(); reject(initError); }} }} }}, 1000); }}); }} catch (err) {{ if(this.onStatusUpdate) this.onStatusUpdate(`Permission denied/error: ${{err.message}}`); if (this.onError) this.onError(err); this._cleanup(); return Promise.reject(err); }} }}
+                _initiateRecording(timeLimit, requestedFormat) {{ /* ... same definition as before ... */ const {{ mimeType, fileExtension }} = this._getMimeType(requestedFormat); if (!mimeType) {{ const err = new Error("MIME type selection failed for MediaRecorder."); if (this.onError) this.onError(err); this._cleanup(); throw err; }} try {{ this.mediaRecorder = new MediaRecorder(this.mediaStream, {{ mimeType }}); }} catch (e) {{ const err = new Error(`Failed to create MediaRecorder: ${{e.message}} (MIME: ${{mimeType}})`); if (this.onError) this.onError(err); this._cleanup(); throw err; }} this.mediaRecorder.onstop = () => {{ if (this.timerInterval) {{ clearTimeout(this.timerInterval); this.timerInterval = null; }} const blob = new Blob(this.recordedBlobs, {{ type: this.mediaRecorder.mimeType }}); const finalFileName = `screen-recording-${{new Date().toISOString().replace(/[:.]/g, '-')}}.${{fileExtension}}`; console.log(`[Recorder] Stopped. Blob type: ${{blob.type}}, size: ${{blob.size}}, filename: ${{finalFileName}}`); if (this.onRecordingStop) this.onRecordingStop(blob, finalFileName, false); this._cleanup(); }}; this.mediaRecorder.ondataavailable = (event) => {{ if (event.data && event.data.size > 0) this.recordedBlobs.push(event.data); }}; this.mediaRecorder.start(); if(this.onStatusUpdate) this.onStatusUpdate(`Recording started (Attempting: ${{fileExtension}}, Actual MIME: ${{this.mediaRecorder.mimeType}}).`); if (this.onRecordingStart) this.onRecordingStart(); if (timeLimit && timeLimit > 0) {{ this.timerInterval = setTimeout(() => {{ if (this.mediaRecorder && this.mediaRecorder.state === "recording") this.stopRecording(); }}, timeLimit * 1000); }} }}
+                stopRecording(stopMediaRecorderInstance = true) {{ /* ... same definition as before ... */ if (this.countdownInterval) {{ clearInterval(this.countdownInterval); this.countdownInterval = null; if (this.onRecordingStop) this.onRecordingStop(null, null, true); this._cleanup(); return; }} if (this.mediaRecorder && this.mediaRecorder.state === "recording" && stopMediaRecorderInstance) this.mediaRecorder.stop(); else if (this.mediaRecorder && this.mediaRecorder.state !== "inactive" && !stopMediaRecorderInstance) {{ if (this.mediaRecorder.state === "recording") this.mediaRecorder.stop(); else this._cleanup(); }} else this._cleanup(); if (this.timerInterval) {{ clearTimeout(this.timerInterval); this.timerInterval = null; }} }}
+                _cleanup() {{ /* ... same definition as before ... */ if (this.mediaStream) {{ this.mediaStream.getTracks().forEach(track => track.stop()); this.mediaStream = null; }} this.mediaRecorder = null; this.recordedBlobs = []; if (this.timerInterval) clearTimeout(this.timerInterval); this.timerInterval = null; if (this.countdownInterval) clearInterval(this.countdownInterval); this.countdownInterval = null; if(this.onStatusUpdate) this.onStatusUpdate("Idle. Resources cleaned."); }}
+                static download(blob, filename) {{ /* ... same definition as before ... */ const url = URL.createObjectURL(blob); const a = document.createElement("a"); document.body.appendChild(a); a.style.display = "none"; a.href = url; a.download = filename; a.click(); window.URL.revokeObjectURL(url); document.body.removeChild(a); console.log(`[Recorder] Download triggered for ${{filename}}`); }}
+            }} // --- End of ScreenRecorder Class ---
 
-            function debounce(func, wait) {{ /* ... debounce function ... */
-                let timeout;
-                return function executedFunction(...args) {{
-                    const later = () => {{
-                        clearTimeout(timeout);
-                        func(...args);
-                    }};
-                    clearTimeout(timeout);
-                    timeout = setTimeout(later, wait);
-                }};
-            }}
+            const params = {json.dumps(js_component_params)};
+            const startBtn = document.getElementById('startRecordButtonSSR_modal_v3');
+            const stopBtn = document.getElementById('stopRecordButtonSSR_modal_v3');
+            const statusEl = document.getElementById('recorderStatusSSR_modal_v3');
+            const countdownEl = document.getElementById('countdownSSR_modal_v3');
+            const actionEl = document.getElementById('actionStatusSSR_modal_v3');
+            // Upload button is removed from JS logic as well
 
-            try {{
-                const module = await import('{cdn_url}');
-                AdvancedScreenRecorder_modal = module.AdvancedScreenRecorder;
-                ASPlayerStatus_modal = module.ASPlayerStatus; 
+            function debounce(func, wait) {{ /* ... same as before ... */ let timeout; return function executedFunction(...args) {{ const later = () => {{ clearTimeout(timeout); func(...args); }}; clearTimeout(timeout); timeout = setTimeout(later, wait); }}; }}
+            const sendValueToStreamlitDebounced = debounce((value) => {{ if (window.Streamlit) window.Streamlit.setComponentValue(value); else console.warn("Streamlit obj not found"); }}, 300);
 
-                if (!AdvancedScreenRecorder_modal || !ASPlayerStatus_modal) {{
-                    throw new Error('AdvancedScreenRecorder or ASPlayerStatus not found in {PACKAGE_NAME}. Check exports.');
+            const recorder = new ScreenRecorder();
+            recorder.onStatusUpdate = (message) => {{ if (statusEl) statusEl.textContent = `Status: ${{message}}`; }};
+            recorder.onCountdown = (count) => {{ if (countdownEl) countdownEl.textContent = count > 0 ? `Recording in ${{count}}...` : (count === 0 ? 'REC 🔴' : ''); }};
+            recorder.onRecordingStart = () => {{
+                if (statusEl) statusEl.textContent = "Status: Recording..."; if (countdownEl) countdownEl.textContent = "REC 🔴";
+                if (startBtn) startBtn.disabled = true; if (stopBtn) stopBtn.disabled = false;
+                if (actionEl) actionEl.textContent = '';
+            }};
+            recorder.onError = (error) => {{
+                if (statusEl) {{ statusEl.textContent = `Error: ${{error.message}}`; statusEl.style.color="red"; }}
+                if (countdownEl) countdownEl.textContent = ''; if (startBtn) startBtn.disabled = false;
+                if (stopBtn) stopBtn.disabled = true; if (actionEl) actionEl.textContent = `Failed: ${{error.message}}`;
+            }};
+
+            recorder.onRecordingStop = async (blob, filename, cancelled) => {{
+                if (countdownEl) countdownEl.textContent = ''; if (startBtn) startBtn.disabled = false; if (stopBtn) stopBtn.disabled = true;
+                if (cancelled) {{ if (statusEl) statusEl.textContent = "Status: Recording cancelled."; if (actionEl) actionEl.textContent = "Operation cancelled."; return; }}
+                if (!blob || !filename) {{ if (statusEl) statusEl.textContent = "Status: Stopped, no data captured."; if (actionEl) actionEl.textContent = "No video data recorded."; return; }}
+
+                // ALL recordings are now direct download
+                ScreenRecorder.download(blob, filename);
+                let formatGenerated = params.format.toUpperCase();
+                if (filename.includes('.')) {{ // Try to get actual extension from generated filename
+                    formatGenerated = filename.split('.').pop().toUpperCase();
                 }}
-
-                const startButton_modal = document.getElementById('startRecordButtonSSR_modal');
-                const stopButton_modal = document.getElementById('stopRecordButtonSSR_modal');
-                const recorderStatusEl_modal = document.getElementById('recorderStatusSSR_modal');
-                const actionStatusEl_modal = document.getElementById('actionStatusSSR_modal');
+                if (actionEl) {{ actionEl.textContent = `${{formatGenerated}} Download of '${{filename}}' initiated.`; actionEl.style.color = "green"; }}
                 
-                const includeAudio = {json.dumps(st.session_state.audio_enabled_for_js_recorder)};
-                const maxRecTimeFromPython = {json.dumps(max_rec_time_py)}; // Injected max recording time
+                sendValueToStreamlitDebounced({{
+                    type: "directDownloadComplete", // Same event for all formats now
+                    filename: filename,
+                    blobUrl: URL.createObjectURL(blob), // For preview
+                    generatedFormat: params.format // The originally requested format
+                }});
+                if (statusEl) statusEl.textContent = `Status: ${{formatGenerated}} downloaded. Close modal or record again.`;
+            }};
 
-                const sendValueToStreamlitDebounced = debounce((value) => {{
-                    Streamlit.setComponentValue(value);
-                }}, 300);
-
-                // --- Construct recorder options, including maxRecordingTimeSeconds ---
-                const recorderOptions = {{
-                    mediaStreamConstraints: {{ 
-                        audio: includeAudio 
-                    }},
-                    onStatusChange: (status, details) => {{
-                        if (!recorderStatusEl_modal) return;
-                        let statusText = `Status: ${{status}}`;
-                        if (details) {{
-                            statusText += ` (${{details instanceof Error ? details.message : String(details)}})`;
-                        }}
-                        // Add time limit info to status if applicable and not already part of a detailed message
-                        if (typeof maxRecTimeFromPython === 'number' && maxRecTimeFromPython > 0 && status === ASPlayerStatus_modal.IDLE && !details) {{
-                            statusText += ` (Limit: ${{maxRecTimeFromPython}}s)`;
-                        }}
-                        recorderStatusEl_modal.textContent = statusText;
-
-                        startButton_modal.disabled = status === ASPlayerStatus_modal.RECORDING || status === ASPlayerStatus_modal.REQUESTING_PERMISSION;
-                        stopButton_modal.disabled = status !== ASPlayerStatus_modal.RECORDING;
-                        if (status !== ASPlayerStatus_modal.STOPPED) {{
-                           actionStatusEl_modal.textContent = "";
-                        }}
-                         recorderStatusEl_modal.style.color = (status === ASPlayerStatus_modal.ERROR || status === ASPlayerStatus_modal.PERMISSION_DENIED) ? "red" : "inherit";
-                    }},
-                    onRecordingComplete: (blob, filename) => {{
-                        AdvancedScreenRecorder_modal.downloadBlob(blob, filename); 
-                        actionStatusEl_modal.textContent = `Download of '${{filename}}' initiated. Check browser downloads.`;
-                        actionStatusEl_modal.style.color = "green";
-                        console.log(`Client-side download initiated for ${{filename}}`);
-                        
-                        const blobUrl = URL.createObjectURL(blob);
-                        sendValueToStreamlitDebounced({{
-                            type: "recordingComplete",
-                            filename: filename,
-                            blobUrl: blobUrl,
-                        }});
-                        recorderStatusEl_modal.textContent = "Status: Download processed. You can close this recorder.";
-                    }}
-                }};
-
-                // Add maxRecordingTimeSeconds to options if it's a valid number
-                if (typeof maxRecTimeFromPython === 'number' && maxRecTimeFromPython > 0) {{
-                    recorderOptions.maxRecordingTimeSeconds = maxRecTimeFromPython;
-                    if (recorderStatusEl_modal.textContent.includes("Idle")) {{ // Update initial idle message
-                         recorderStatusEl_modal.textContent = `Status: Idle (Limit: ${{maxRecTimeFromPython}}s)`;
-                    }}
-                }}
-                
-                const recorder_modal = new AdvancedScreenRecorder_modal(recorderOptions);
-
-                startButton_modal.onclick = async () => {{
-                    actionStatusEl_modal.textContent = '';
-                    try {{ 
-                        await recorder_modal.startRecording(); 
-                    }}
-                    catch (err) {{ 
-                        console.error("Error from recorder.startRecording() call:", err); 
-                        recorderStatusEl_modal.textContent = `Status: Error - ${{err.message}}`;
-                        recorderStatusEl_modal.style.color = "red";
-                    }}
-                }};
-
-                stopButton_modal.onclick = () => {{ recorder_modal.stopRecording(); }};
-
-            }} catch (err) {{
-                console.error("Failed to load or initialize AdvancedScreenRecorder from CDN (modal): ", err);
-                if (rootElSSR_modal) {{
-                    rootElSSR_modal.innerHTML = `<p style='color:red;'><b>Error loading screen recorder:</b><br/>${{err.message}}.<br/>Package: '<b>${PACKAGE_NAME}</b>@<b>${PACKAGE_VERSION}</b>'</p><p>CDN URL: {cdn_url}</p><p>Check browser console (F12) and ensure the package is published correctly and the CDN URL is valid.</p>`;
-                }}
-            }}
+            startBtn.onclick = async () => {{ /* ... same as before, ensure UI reset ... */ if(statusEl) statusEl.style.color="inherit"; if(actionEl) actionEl.textContent = ''; if(countdownEl) countdownEl.textContent = ''; recorder.startRecording({{ timeLimit: params.timeLimit, delay: params.delay, audio: params.audio, format: params.format }}).catch(err => {{}}); }};
+            stopBtn.onclick = () => {{ recorder.stopRecording(); }};
+            if (statusEl && params.timeLimit) statusEl.textContent = `Status: Idle (Limit: ${{params.timeLimit}}s)`; else if (statusEl) statusEl.textContent = `Status: Idle (No limit)`;
         </script>
         """
-        component_return_value = components.html(html_component, height=250, scrolling=False) # Added dynamic key
+        try:
+             # Height can be reduced as upload button is gone
+             st.session_state.recorder_component_value = components.html(html_component, height=250, scrolling=False, key=component_instance_key)
+        except TypeError as e_html_key:
+            if "unexpected keyword argument 'key'" in str(e_html_key):
+                #   st.warning("Hint: Streamlit version <1.11.0. `key` for components.html ignored.")
+                st.session_state.recorder_component_value = components.html(html_component, height=250, scrolling=False)
+            else: raise e_html_key
 
-        if component_return_value is not None: 
-            if isinstance(component_return_value, dict):
-                if st.session_state.get("recorder_component_value_processed_id") != id(component_return_value):
-                    st.session_state.recorder_component_value_processed_id = id(component_return_value)
+        if st.session_state.recorder_component_value is not None and \
+        st.session_state.recorder_component_value_processed_id != id(st.session_state.recorder_component_value):
+            st.session_state.recorder_component_value_processed_id = id(st.session_state.recorder_component_value)
+            component_data = st.session_state.recorder_component_value
+            if isinstance(component_data, dict):
+                event_type = component_data.get("type")
+                st.session_state.screencast_final_filename_from_js = component_data.get("originalFilename") or component_data.get("filename", "recording.bin")
 
-                    if component_return_value.get("type") == "recordingComplete":
-                        st.session_state.screencast_blob_url_for_preview = component_return_value.get("blobUrl")
-                        st.session_state.screencast_filename_from_js = component_return_value.get("filename", "advanced-screen-recording.webm")
-                        st.session_state.show_recorder_ui_modal = False 
-                        st.session_state.show_next_steps_screencast_modal = True 
-                        st.rerun()
-            else:
-                print(f"Unexpected data type from HTML component: {type(component_return_value)}, value: {component_return_value}")
-        
+                if event_type == "directDownloadComplete": # WebM
+                    st.session_state.screencast_local_blob_url_for_preview = component_data.get("blobUrl")
+                    st.session_state.server_upload_status = "not_applicable_direct_download" # Mark as not applicable
+                    st.session_state.show_recorder_ui_modal = False
+                    st.session_state.show_next_steps_screencast_modal = True
+                    st.rerun()
+                elif event_type == "serverUploadComplete": # MP4/MKV uploaded successfully
+                    st.session_state.server_upload_status = "completed"
+                    st.session_state.server_uploaded_file_info = {
+                        "uploaded_filename_on_server": component_data.get("uploadedFilenameOnServer"),
+                        "download_url_relative_path": component_data.get("downloadUrlRelativePath")
+                    }
+                    st.session_state.show_recorder_ui_modal = False
+                    st.session_state.show_next_steps_screencast_modal = True
+                    st.rerun()
+                elif event_type == "serverUploadError": # MP4/MKV upload failed
+                    st.session_state.server_upload_status = "error"
+                    st.session_state.last_upload_error_message = component_data.get("error")
+                    st.session_state.show_recorder_ui_modal = False # Still close recorder modal
+                    st.session_state.show_next_steps_screencast_modal = True # Show next steps to report error
+                    st.rerun()
+            # No serverUploadComplete or serverUploadError events expected anymore
         st.markdown("</div>", unsafe_allow_html=True)
 
 # --- MODAL 2: Next Steps After Screencast ---
@@ -255,391 +270,165 @@ if st.session_state.show_next_steps_screencast_modal:
         st.markdown("<div class='modal-box'>", unsafe_allow_html=True)
         m2_header, m2_close = st.columns([0.9, 0.1])
         with m2_header:
-            st.subheader("🎉 Recording Downloaded! Next steps...")
+            st.subheader("🎉 Recording Downloaded!")
         with m2_close:
-            if st.button("✖", key="close_next_steps_screencast", help="Close Next Steps"):
+            if st.button("✖", key="close_next_steps_modal_comp_v3", help="Close"):
                 st.session_state.show_next_steps_screencast_modal = False
-                st.session_state.screencast_blob_url_for_preview = None
+                st.session_state.screencast_local_blob_url_for_preview = None
                 st.rerun()
-
         st.markdown("---")
-        st.markdown("#### Step 1: Preview your video (if browser allows)")
-        if st.session_state.screencast_blob_url_for_preview:
+
+        final_filename = st.session_state.screencast_final_filename_from_js
+        # Get the format that was actually generated/downloaded (passed from JS)
+        generated_format = st.session_state.get("last_generated_format_for_modal2", "file").upper()
+
+        st.success(f"Your {generated_format} recording (`{final_filename}`) was generated by your browser and downloaded directly.")
+
+        # Determine mime type for preview based on filename extension (best effort)
+        preview_mime_type = "application/octet-stream"
+        if final_filename.lower().endswith(".webm"): preview_mime_type = "video/webm"
+        elif final_filename.lower().endswith(".mp4"): preview_mime_type = "video/mp4"
+        elif final_filename.lower().endswith(".mkv"): preview_mime_type = "video/x-matroska" # Browser support for MKV preview varies
+
+        if st.session_state.screencast_local_blob_url_for_preview:
+            st.markdown(f"#### Preview your {generated_format} video (if browser supports this format for preview)")
             try:
-                st.video(st.session_state.screencast_blob_url_for_preview, format="video/webm") 
-                st.caption(f"Playing: `{st.session_state.screencast_filename_from_js}`")
+                st.video(st.session_state.screencast_local_blob_url_for_preview, format=preview_mime_type)
             except Exception as e_video_preview:
-                st.warning(f"Could not display video preview directly in Streamlit: {e_video_preview}")
-                st.info("You can preview the downloaded file in your browser or a media player.")
+                st.warning(f"Could not display video preview: {e_video_preview}. The format might not be playable in this browser view, or the Blob URL was revoked.")
         else:
-            st.info("No video preview available. The recording was downloaded by your browser.")
-
+            st.info("No local preview available or preview already closed.")
+        st.markdown(f"Please check your browser's default download location for `{final_filename}`.")
         st.markdown("---")
-        st.markdown(f"#### Step 2: Locate the downloaded file")
-        st.write(f"Your recording (`{st.session_state.screencast_filename_from_js}`) has been downloaded by your browser. Please check your browser's default download location.")
-        st.caption("The video is likely in WebM format.")
-
-        st.markdown("---")
-        st.markdown("#### Step 3: Share your video")
-        st.caption("You can now share this video on various platforms or via email.")
-
+        st.markdown("#### Next Steps: Share your video from your downloads folder.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-# --- Sidebar ---
+# --- Sidebar (Existing, Unchanged) ---
+# [ ... keep your existing sidebar code ... ]
 with st.sidebar:
     st.header("1. Upload Your Data")
-    uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=["csv", "xlsx", "xls"], key="file_uploader_widget")
-
-    if uploaded_file:
-        with st.form("upload_form", clear_on_submit=True):
-            submitted = st.form_submit_button("Upload and Start New Session")
-            if submitted:
+    uploaded_file_sidebar = st.file_uploader("Choose a CSV or Excel file", type=["csv", "xlsx", "xls"], key="file_uploader_main_sidebar_comp_v3")
+    if uploaded_file_sidebar:
+        with st.form("upload_form_main_sidebar_comp_v3", clear_on_submit=True):
+            submitted_sidebar = st.form_submit_button("Upload and Start New Session")
+            if submitted_sidebar:
                 with st.spinner("Uploading..."):
-                    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+                    files_sidebar = {"file": (uploaded_file_sidebar.name, uploaded_file_sidebar.getvalue(), uploaded_file_sidebar.type)}
                     try:
-                        upload_response = requests.post(UPLOAD_URL, files=files, timeout=120)
-                        upload_response.raise_for_status()
-                        file_info = upload_response.json()
-                        st.session_state.current_session_id = file_info["session_id"]
-                        st.session_state.df_columns = file_info["columns"]
-                        st.session_state.df_head = file_info["df_head"]
-                        st.session_state.current_filename = file_info["filename"]
-                        st.session_state.messages = [] 
-                        st.session_state.plot_key_counter = 0
-                        st.session_state.show_recorder_ui_modal = False
-                        st.session_state.show_next_steps_screencast_modal = False
-                        st.session_state.screencast_blob_url_for_preview = None
-                        st.session_state.current_max_recording_time = None # Reset on new session
-                        st.success(f"File '{st.session_state.current_filename}' processed! Session: ...{st.session_state.current_session_id[-6:]}")
-                        st.rerun() 
-                    except Exception as e:
-                        st.error(f"File upload failed: {str(e)[:500]}")
-                        traceback.print_exc()
-
+                        upload_response_sidebar = requests.post(UPLOAD_DATA_URL, files=files_sidebar, timeout=120)
+                        upload_response_sidebar.raise_for_status()
+                        file_info_sidebar = upload_response_sidebar.json()
+                        for key_default, val_default in default_session_vars.items():
+                            if key_default not in ["messages"]: st.session_state[key_default] = val_default
+                        st.session_state.messages = []
+                        st.session_state.current_session_id = file_info_sidebar["session_id"]
+                        st.session_state.df_columns = file_info_sidebar["columns"]
+                        st.session_state.df_head = file_info_sidebar["df_head"]
+                        st.session_state.current_data_filename = file_info_sidebar["filename"]
+                        st.success(f"File '{st.session_state.current_data_filename}' processed! Session: ...{st.session_state.current_session_id[-6:]}")
+                        st.rerun()
+                    except Exception as e_sidebar_upload: st.error(f"File upload failed: {str(e_sidebar_upload)[:500]}"); traceback.print_exc()
     if st.session_state.current_session_id:
-        st.markdown("---")
-        st.success(f"Active Session: `{st.session_state.current_session_id}`") 
-        st.info(f"Current File: **{st.session_state.current_filename}**")
+        st.markdown("---"); st.success(f"Active Session: `{st.session_state.current_session_id}`"); st.info(f"File: **{st.session_state.current_data_filename}**")
         with st.expander("Data Preview", expanded=False):
-            st.text_area("Columns:", value=", ".join(st.session_state.df_columns), height=100, disabled=True, key="sidebar_df_cols_preview")
-            st.text_area("Data Head:", value=st.session_state.df_head, height=150, disabled=True, key="sidebar_df_head_preview")
-    else:
-        st.info("Upload a data file to begin.")
+            st.text_area("Columns:", value=", ".join(st.session_state.df_columns), height=100, disabled=True, key="sidebar_df_cols_preview_comp_v3")
+            st.text_area("Data Head:", value=st.session_state.df_head, height=150, disabled=True, key="sidebar_df_head_preview_comp_v3")
+    else: st.info("Upload a data file to begin.")
 
-# --- Main Chat Interface (remains unchanged, ensure this part is identical to your previous working version) ---
-st.header("2. Chat with Your Data") # ... (rest of your chat interface code) ...
-# (The existing chat interface code is assumed to be here, as it was long and not directly modified by this request)
-# Please re-insert your full chat interface code from the "st.header("2. Chat with Your Data")" line onwards.
-# For brevity in this response, I am omitting the full chat UI, but ensure it's in your final file.
-# The following is a placeholder for where your chat UI code should be:
 
+st.header("2. Chat with Your Data")
 for i, msg_obj in enumerate(st.session_state.messages):
     with st.chat_message(msg_obj["role"]):
-        if msg_obj.get("pre_summary_content"):
-            st.markdown(">" + msg_obj["pre_summary_content"].strip())
-            st.markdown("---")
-
+        if msg_obj.get("pre_summary_content"): st.markdown(">" + msg_obj["pre_summary_content"].strip()); st.markdown("---")
         st.markdown(msg_obj.get("content", "").strip())
-
         if msg_obj["role"] == "assistant":
             if msg_obj.get("plotly_fig_json"):
-                try:
-                    plotly_fig = plotly_io.from_json(msg_obj["plotly_fig_json"])
-                    plot_key_hist = f"plot_hist_{i}_{msg_obj.get('timestamp', datetime.now().timestamp())}"
-                    st.plotly_chart(plotly_fig, use_container_width=True, key=plot_key_hist)
-                except Exception as e_plot_render:
-                    st.error(f"Error rendering interactive plot from history: {e_plot_render}")
-
+                try: st.plotly_chart(plotly_io.from_json(msg_obj["plotly_fig_json"]),use_container_width=True,key=f"plot_hist_comp_v3_{i}_{msg_obj.get('timestamp', datetime.now().timestamp())}")
+                except Exception as e: st.error(f"Plot render error: {e}")
             if msg_obj.get("plot_insights"):
-                with st.expander("🔍 View Plot Insights/Summary", expanded=False):
-                    st.markdown(msg_obj["plot_insights"])
+                with st.expander("🔍 View Plot Insights/Summary", expanded=False): st.markdown(msg_obj["plot_insights"])
+            # Corrected plot_config_json handling from previous issue
+            if msg_obj.get("plot_config_json"):
+                st.write("**Plot Config:**")
+                plot_config = msg_obj["plot_config_json"]
+                try:
+                    if isinstance(plot_config, str): config_to_display = json.loads(plot_config)
+                    elif isinstance(plot_config, (dict, list)): config_to_display = plot_config
+                    else: st.text(f"Raw plot config (type: {type(plot_config)}):\n{str(plot_config)}"); config_to_display = None
+                    if config_to_display is not None: st.json(config_to_display, expanded=False)
+                except json.JSONDecodeError: st.text(f"Invalid JSON in plot_config_json:\n{plot_config}")
+                except Exception as e_cfg: st.error(f"Err display plot_config: {e_cfg}"); st.text(f"Raw: {plot_config}")
 
-            thinking_expander_title = "⚙️ View Agent's Thinking & Configuration"
-            show_thinking_details = bool(
-                msg_obj.get("plot_config_json")
-                or msg_obj.get("thinking_log_str")
-                or (msg_obj.get("error") and msg_obj.get("response_type") == "error")
-            )
+            show_thinking = bool(msg_obj.get("thinking_log_str") or (msg_obj.get("error") and msg_obj.get("response_type") == "error"))
+            if show_thinking: # Only show thinking expander if there's thinking log or an error to show
+                with st.expander("⚙️ View Agent's Thinking & Configuration", expanded=False):
+                    if msg_obj.get("thinking_log_str"): st.write("**Agent Log:**"); st.text_area("Log:",value=msg_obj["thinking_log_str"],height=200,disabled=True,key=f"log_hist_text_comp_v3_{i}_{msg_obj.get('timestamp', datetime.now().timestamp())}")
+                    if msg_obj.get("response_type"): st.caption(f"Action Type: `{msg_obj['response_type']}`")
+                    if msg_obj.get("error") and msg_obj.get("response_type") == "error": st.error(f"Agent Error: {msg_obj['error']}")
 
-            if show_thinking_details:
-                with st.expander(thinking_expander_title, expanded=False):
-                    if msg_obj.get("plot_config_json"):
-                        st.write("**Plot Configuration Used:**")
-                        try:
-                            config_dict = json.loads(msg_obj["plot_config_json"])
-                            st.json(config_dict, expanded=False)
-                        except json.JSONDecodeError:
-                            st.text(msg_obj["plot_config_json"])
-
-                    if msg_obj.get("thinking_log_str"):
-                        st.write("**Agent's Process Log:**")
-                        log_key_hist_text = f"log_hist_text_{i}_{msg_obj.get('timestamp', datetime.now().timestamp())}"
-                        st.text_area(
-                            "Log Details:",
-                            value=msg_obj["thinking_log_str"],
-                            height=200,
-                            disabled=True,
-                            key=log_key_hist_text,
-                        )
-
-                    if msg_obj.get("response_type"):
-                        st.caption(f"Agent Action Type: `{msg_obj['response_type']}`")
-                    if msg_obj.get("error") and msg_obj.get("response_type") == "error":
-                        st.error(f"Agent Error Detail: {msg_obj['error']}")
-
-if prompt := st.chat_input(
-    "Ask about your data or request a plot...",
-    key="main_chat_input_widget",
-    disabled=not st.session_state.current_session_id,
-):
-    current_message_timestamp = datetime.now().isoformat()
-    st.session_state.messages.append(
-        {"role": "user", "content": prompt, "timestamp": current_message_timestamp}
-    )
-
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
+if prompt := st.chat_input("Ask about your data...",key="main_chat_input_widget_comp_v3",disabled=not st.session_state.current_session_id):
+    ts = datetime.now().isoformat(); st.session_state.messages.append({"role": "user", "content": prompt, "timestamp": ts})
+    with st.chat_message("user"): st.markdown(prompt)
     with st.chat_message("assistant"):
-        pre_summary_content_full = ""
-        qna_content_full = ""
-        pre_summary_placeholder = st.empty()
-        qna_placeholder = st.empty()
-        final_response_container = st.container() 
-        assistant_response_for_history = {
-            "role": "assistant",
-            "timestamp": current_message_timestamp,
-        }
+        pre_summary_full, qna_full, final_resp_cont = "", "", st.container()
+        pre_sum_ph, qna_ph = st.empty(), st.empty()
+        hist_entry = {"role": "assistant", "timestamp": ts}
         payload = {"session_id": st.session_state.current_session_id, "query": prompt}
-
         try:
-            with requests.post(
-                PROCESS_QUERY_URL, json=payload, stream=True, timeout=360 
-            ) as r:
+            with requests.post(PROCESS_QUERY_URL, json=payload, stream=True, timeout=360) as r:
                 r.raise_for_status()
                 for line in r.iter_lines():
                     if line:
                         try:
-                            chunk_data = json.loads(line.decode("utf-8"))
-                            chunk_type = chunk_data.get("type")
-
-                            if chunk_type == "thinking_process_update":
-                                pre_summary_content_full += chunk_data.get("chunk", "")
-                                pre_summary_placeholder.markdown(
-                                    ">" + pre_summary_content_full.strip() + "▌"
-                                )
-                            elif chunk_type == "content":
-                                qna_content_full += chunk_data.get("chunk", "")
-                                qna_placeholder.markdown(
-                                    qna_content_full.strip() + "▌"
-                                )
-                            elif chunk_type == "final_agent_response":
-                                response_data = chunk_data.get("data", {})
-                                assistant_response_for_history.update(response_data)
-
-                                pre_summary_placeholder.empty()
-                                qna_placeholder.empty()
-
-                                with final_response_container: 
-                                    main_content_final = response_data.get(
-                                        "content", "Processing complete."
-                                    )
-                                    st.markdown(main_content_final.strip())
-                                    if "content" not in assistant_response_for_history or not assistant_response_for_history["content"]:
-                                        assistant_response_for_history["content"] = main_content_final
-
-
-                                    if response_data.get("plotly_fig_json"):
+                            chunk = json.loads(line.decode("utf-8"))
+                            if chunk.get("type") == "thinking_process_update": pre_summary_full += chunk.get("chunk",""); pre_sum_ph.markdown(">" + pre_summary_full.strip() + "▌")
+                            elif chunk.get("type") == "content": qna_full += chunk.get("chunk",""); qna_ph.markdown(qna_full.strip() + "▌")
+                            elif chunk.get("type") == "final_agent_response":
+                                data = chunk.get("data",{}); hist_entry.update(data); pre_sum_ph.empty(); qna_ph.empty()
+                                with final_resp_cont:
+                                    main_content = data.get("content", "Processed."); st.markdown(main_content.strip())
+                                    if not hist_entry.get("content"): hist_entry["content"] = main_content
+                                    if data.get("plotly_fig_json"):
+                                        st.session_state.plot_key_counter+=1; st.plotly_chart(plotly_io.from_json(data["plotly_fig_json"]),use_container_width=True,key=f"plot_stream_comp_v3_{st.session_state.plot_key_counter}_{ts}")
+                                    if data.get("plot_insights"): 
+                                        with st.expander("🔍 Plot Insights", expanded=True): st.markdown(data["plot_insights"])
+                                    # Corrected plot_config_json handling
+                                    if data.get("plot_config_json"):
+                                        st.write("**Plot Config (Final):**")
+                                        plot_config_final = data["plot_config_json"]
                                         try:
-                                            plotly_fig_final = plotly_io.from_json(
-                                                response_data["plotly_fig_json"]
-                                            )
-                                            st.session_state.plot_key_counter += 1
-                                            plot_key_stream = f"plot_stream_{st.session_state.plot_key_counter}_{current_message_timestamp}"
-                                            st.plotly_chart(
-                                                plotly_fig_final,
-                                                use_container_width=True,
-                                                key=plot_key_stream,
-                                            )
-                                        except Exception as e_plot_final:
-                                            st.error(
-                                                f"Error rendering interactive plot from final response: {e_plot_final}"
-                                            )
+                                            if isinstance(plot_config_final, str): config_to_display_final = json.loads(plot_config_final)
+                                            elif isinstance(plot_config_final, (dict, list)): config_to_display_final = plot_config_final
+                                            else: st.text(f"Raw final plot_config (type: {type(plot_config_final)}):\n{str(plot_config_final)}"); config_to_display_final = None
+                                            if config_to_display_final is not None: st.json(config_to_display_final, expanded=False)
+                                        except json.JSONDecodeError: st.text(f"Invalid JSON in final plot_config_json:\n{plot_config_final}")
+                                        except Exception as e_cfg_final: st.error(f"Err display final plot_config: {e_cfg_final}"); st.text(f"Raw final: {plot_config_final}")
 
-                                    if response_data.get("plot_insights"):
-                                        with st.expander(
-                                            "🔍 View Plot Insights/Summary", expanded=True
-                                        ):
-                                            st.markdown(response_data["plot_insights"])
-
-                                    thinking_exp_title_final = "⚙️ View Agent's Thinking & Configuration (Final)"
-                                    show_thinking_final = bool(
-                                        response_data.get("plot_config_json")
-                                        or response_data.get("thinking_log_str")
-                                        or (
-                                            response_data.get("error")
-                                            and response_data.get("response_type")
-                                            == "error"
-                                        )
-                                    )
-                                    if show_thinking_final:
-                                        with st.expander(
-                                            thinking_exp_title_final, expanded=False
-                                        ):
-                                            if response_data.get("plot_config_json"):
-                                                st.write("**Plot Configuration Used:**")
-                                                try:
-                                                    st.json(
-                                                        json.loads(
-                                                            response_data[
-                                                                "plot_config_json"
-                                                            ]
-                                                        ),
-                                                        expanded=False,
-                                                    )
-                                                except: 
-                                                    st.text(
-                                                        response_data[
-                                                            "plot_config_json"
-                                                        ]
-                                                    )
-                                            if response_data.get("thinking_log_str"):
-                                                st.write("**Agent's Process Log:**")
-                                                log_key_final_stream_text = f"log_final_stream_text_{current_message_timestamp}"
-                                                st.text_area(
-                                                    "Log Details:",
-                                                    value=response_data[
-                                                        "thinking_log_str"
-                                                    ],
-                                                    height=200,
-                                                    disabled=True,
-                                                    key=log_key_final_stream_text,
-                                                )
-                                            if response_data.get("response_type"):
-                                                st.caption(
-                                                    f"Agent Action Type: `{response_data['response_type']}`"
-                                                )
-                                            if response_data.get(
-                                                "error"
-                                            ) and response_data.get(
-                                                "response_type"
-                                            ) == "error":
-                                                st.error(
-                                                    f"Agent Error Detail: {response_data['error']}"
-                                                )
-                            elif chunk_type == "system":
-                                print(
-                                    f"System Message from Stream: {chunk_data.get('message')}"
-                                )
-                            elif chunk_type == "error": 
-                                error_msg_chunk = chunk_data.get(
-                                    "chunk"
-                                ) or chunk_data.get(
-                                    "content", "Unknown error from stream."
-                                )
-                                st.error(f"Backend Stream Error: {error_msg_chunk}")
-                                assistant_response_for_history[
-                                    "content"
-                                ] = f"Error from backend: {error_msg_chunk}"
-                                assistant_response_for_history[
-                                    "response_type"
-                                ] = "error"
-                                break 
-                        except json.JSONDecodeError:
-                            print(
-                                f"Stream: Failed to decode JSON line: {line.decode('utf-8', errors='ignore')}"
-                            )
-                        except Exception as e_chunk_process:
-                            print(f"Stream: Error processing chunk: {e_chunk_process}")
-                            traceback.print_exc()
-                            st.warning( 
-                                f"A minor error occurred while displaying part of the response: {e_chunk_process}"
-                            )
-
-                if pre_summary_content_full and hasattr(pre_summary_placeholder, 'empty') and not pre_summary_placeholder._is_empty:
-                    pre_summary_placeholder.markdown(
-                        ">" + pre_summary_content_full.strip()
-                    ) 
-                    if "pre_summary_content" not in assistant_response_for_history:
-                         assistant_response_for_history["pre_summary_content"] = pre_summary_content_full
+                                    show_final_thinking = bool(data.get("thinking_log_str") or (data.get("error") and data.get("response_type")=="error"))
+                                    if show_final_thinking: # Only show if log or error
+                                        with st.expander("⚙️ Agent Thinking (Final)", expanded=False):
+                                            if data.get("thinking_log_str"): st.write("**Agent Log:**"); st.text_area("Log:",value=data["thinking_log_str"],height=200,disabled=True,key=f"log_final_stream_text_comp_v3_{ts}")
+                                            if data.get("response_type"): st.caption(f"Action: `{data['response_type']}`")
+                                            if data.get("error") and data.get("response_type")=="error": st.error(f"Agent Error: {data['error']}")
+                            elif chunk.get("type") == "error": hist_entry.update({"content":f"Stream Error: {chunk.get('chunk',chunk.get('content','Unknown'))}", "response_type":"error"}); st.error(f"Stream Error: {chunk.get('chunk',chunk.get('content','Unknown'))}"); break
+                        except Exception as e_chunk: print(f"Chunk proc error: {e_chunk}"); st.warning(f"Display error: {e_chunk}")
+                if not qna_ph._is_empty: qna_ph.empty();
+                if not pre_sum_ph._is_empty: pre_sum_ph.empty();
+                if pre_summary_full and "pre_summary_content" not in hist_entry: hist_entry["pre_summary_content"] = pre_summary_full
+                if qna_full and not hist_entry.get("content"): hist_entry["content"]=qna_full; hist_entry.setdefault("response_type","query_data")
+                if not hist_entry.get("content","").strip() and hist_entry.get("response_type")!="error": hist_entry["content"]="Request processed."; hist_entry.setdefault("response_type","unknown_action")
+                st.session_state.messages.append(hist_entry)
+        except requests.exceptions.RequestException as e_req: err_msg=f"Connection Error: {e_req}"; st.error(err_msg); st.session_state.messages.append({"role":"assistant","content":err_msg,"response_type":"error","timestamp":ts})
+        except Exception as e_main: err_msg=f"Unexpected Error: {e_main}"; st.error(err_msg); traceback.print_exc(); st.session_state.messages.append({"role":"assistant","content":err_msg,"response_type":"error","timestamp":ts})
 
 
-                if qna_content_full and hasattr(qna_placeholder, 'empty') and not qna_placeholder._is_empty:
-                    qna_placeholder.markdown(qna_content_full.strip()) 
-                    if "content" not in assistant_response_for_history or not assistant_response_for_history["content"]:
-                        assistant_response_for_history["content"] = qna_content_full
-                        if "response_type" not in assistant_response_for_history: 
-                             assistant_response_for_history["response_type"] = "query_data"
-
-
-                if "content" not in assistant_response_for_history or not assistant_response_for_history.get("content", "").strip():
-                    if assistant_response_for_history.get("response_type") != "error": 
-                        assistant_response_for_history[
-                            "content"
-                        ] = "Request processed. (No specific textual output was generated for this query)"
-                        if "response_type" not in assistant_response_for_history:
-                            assistant_response_for_history["response_type"] = "unknown_visualize_or_action"
-
-
-                st.session_state.messages.append(assistant_response_for_history)
-
-        except requests.exceptions.Timeout:
-            err_msg = f"Request timed out connecting to the backend at {PROCESS_QUERY_URL}."
-            st.error(err_msg)
-            assistant_response_for_history["content"] = err_msg
-            assistant_response_for_history["response_type"] = "error"
-            st.session_state.messages.append(assistant_response_for_history)
-        except requests.exceptions.HTTPError as http_err_main:
-            error_detail_main = "No specific error detail from server."
-            try:
-                error_detail_main = (
-                    http_err_main.response.json().get("detail", str(http_err_main))
-                    if http_err_main.response 
-                    else str(http_err_main)
-                )
-            except: 
-                error_detail_main = http_err_main.response.text if http_err_main.response and http_err_main.response.text else str(http_err_main)
-            
-            err_msg = f"Query failed (HTTP {http_err_main.response.status_code if http_err_main.response else 'Unknown Status'}): {error_detail_main}"
-            st.error(err_msg)
-            assistant_response_for_history["content"] = err_msg
-            assistant_response_for_history["response_type"] = "error"
-            st.session_state.messages.append(assistant_response_for_history)
-        except requests.exceptions.RequestException as req_err_main: 
-            err_msg = f"Query failed: Could not connect to the backend at {PROCESS_QUERY_URL}. Error: {req_err_main}"
-            st.error(err_msg)
-            assistant_response_for_history["content"] = err_msg
-            assistant_response_for_history["response_type"] = "error"
-            st.session_state.messages.append(assistant_response_for_history)
-        except Exception as e_main_query: 
-            err_msg = f"An unexpected error occurred in the Streamlit app while processing your query: {e_main_query}"
-            st.error(err_msg)
-            traceback.print_exc() 
-            assistant_response_for_history["content"] = err_msg
-            assistant_response_for_history["response_type"] = "error"
-            st.session_state.messages.append(assistant_response_for_history)
-
-# --- Global CSS for Modal Styling (Basic) ---
+# --- Global CSS for Modal Styling (Unchanged) ---
 st.markdown(
     """
     <style>
-    .modal-box {
-        padding: 25px;
-        background-color: #2E2E38; 
-        border-radius: 10px;
-        border: 1px solid #4a4a58;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-        margin-top: 15px;
-        margin-bottom: 15px;
-    }
-    .modal-box h3, .modal-box h4, .modal-box p, .modal-box small, .modal-box label, 
-    .modal-box div[data-testid="stCaptionContainer"], .modal-box li, .modal-box strong {
-        color: #FFFFFF !important;
-    }
-    .modal-box .stCheckbox > label > div {
-        color: #FFFFFF !important;
-    }
+    .modal-box { padding: 25px; background-color: #2E2E38; border-radius: 10px; border: 1px solid #4a4a58; box-shadow: 0 5px 15px rgba(0,0,0,0.3); margin-top: 15px; margin-bottom: 15px; }
+    .modal-box h3, .modal-box h4, .modal-box p, .modal-box small, .modal-box label, .modal-box div[data-testid="stCaptionContainer"], .modal-box li, .modal-box strong, .modal-box .stCheckbox > label > div { color: #FFFFFF !important; }
     </style>
     """, unsafe_allow_html=True
 )
