@@ -1,504 +1,469 @@
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import Optional
+from typing import Optional, Tuple
 from datetime import datetime
-from backend.models import PlotConfig 
+from backend.models import PlotConfig
 import traceback
 import numpy as np
-import plotly.tools
 import plotly.io as pio
-import plotly.express as px # For native Plotly plots
-import plotly.graph_objects as go # Import graph_objects for Layout
+import plotly.express as px
+import plotly.graph_objects as go
 
-def _reshape_for_stacked_bar(df: pd.DataFrame, x_col: str, y_col: Optional[str], color_by_col: str, aggfunc=np.sum) -> Optional[pd.DataFrame]:
-    try:
-        if y_col:
-            if not pd.api.types.is_numeric_dtype(df[y_col]): print(f"UTILS_RESHAPE_ERROR: y_column '{y_col}' not numeric."); return None
-            pivot_df = df.pivot_table(index=x_col, columns=color_by_col, values=y_col, aggfunc=aggfunc).fillna(0)
-        else:
-            pivot_df = df.groupby([x_col, color_by_col]).size().unstack(fill_value=0)
-        if pivot_df.empty: print("UTILS_RESHAPE_WARNING: Pivot table for stacked bar empty."); return None
-        try:
-            sorted_columns = pivot_df.sum().sort_values(ascending=False).index
-            pivot_df = pivot_df[sorted_columns]
-        except Exception as e_sort: print(f"UTILS_RESHAPE_WARNING: Could not sort columns for stacked bar: {e_sort}")
-        return pivot_df
-    except Exception as e: print(f"UTILS_RESHAPE_CRITICAL_ERROR: {e}"); traceback.print_exc(); return None
+def _apply_category_limits(
+    df: pd.DataFrame,
+    config: PlotConfig,
+    target_col: str,
+    value_col: Optional[str]  
+) -> Tuple[pd.DataFrame, bool, Optional[str]]:
+    """
+    Applies top_n_categories or limit_categories_auto to the DataFrame.
+    Returns the modified DataFrame, a boolean indicating if limiting was applied,
+    and a string suffix for the plot title.
+    """
+    if not target_col or target_col not in df.columns:
+        return df, False, None
+
+    limited_df = df.copy()
+    was_limited = False
+    title_suffix = None
+    
+    num_unique_original = limited_df[target_col].nunique() # Use original df for this check
+    limit_n = None
+
+    # Determine the N for limiting
+    if config.top_n_categories and config.top_n_categories > 0:
+        limit_n = config.top_n_categories
+        print(f"UTILS_LIMIT: Applying explicit top_n_categories: {limit_n} to '{target_col}'.")
+    elif config.limit_categories_auto:
+        default_auto_limit = 7 # General default, good for colors/facets
+        if config.plot_type == "bar" and target_col == config.x_column:
+            default_auto_limit = 12 # Allow more bars on x-axis
+        elif config.plot_type == "pie" or config.plot_type == "doughnut":
+            default_auto_limit = 6
+        
+        if num_unique_original > default_auto_limit:
+            limit_n = default_auto_limit
+            print(f"UTILS_LIMIT: Applying limit_categories_auto: {limit_n} to '{target_col}' (was {num_unique_original} unique).")
+        else: # No need to limit if already below threshold
+            return df, False, None
+
+    if limit_n and num_unique_original > limit_n:
+        was_limited = True
+        metric_to_use = config.top_n_metric if config.top_n_categories else "sum"
+
+        # Group by the target column and aggregate the value_col (or count)
+        if value_col and value_col in limited_df.columns and pd.api.types.is_numeric_dtype(limited_df[value_col]):
+            agg_func_map = {"sum": "sum", "mean": "mean", "median": "median", "count": "size"}
+            agg_op = agg_func_map.get(metric_to_use, "sum") 
+
+            if agg_op == "size":
+                 grouped = limited_df.groupby(target_col, observed=True).size()
+            else:
+                 grouped = limited_df.groupby(target_col, observed=True)[value_col].agg(agg_op)
+            
+            top_groups = grouped.nlargest(limit_n).index
+        else: 
+            print(f"UTILS_LIMIT: Using frequency count for top-N on '{target_col}' (value_col:'{value_col}' invalid or metric='count').")
+            top_groups = limited_df[target_col].value_counts().nlargest(limit_n).index
+        
+        limited_df = limited_df[limited_df[target_col].isin(top_groups)]
+        # Make sure the limited_df[target_col] is categorical if it became non-categorical after filtering
+        if not pd.api.types.is_categorical_dtype(limited_df[target_col]) and pd.api.types.is_object_dtype(limited_df[target_col]):
+            limited_df[target_col] = pd.Categorical(limited_df[target_col], categories=top_groups, ordered=True)
+
+        title_suffix = f" (Top {len(top_groups)} {target_col}s)"
+    
+    return limited_df, was_limited, title_suffix
+
+def calculate_dynamic_height(base_height=450, item_height=250, num_items=0, wrap_cols=0, is_faceted=False):
+    if not is_faceted or num_items <= 0 : # If not faceted, or no items to facet, use base_height
+        return base_height
+    if wrap_cols == 0 and num_items > 0 : # if faceting but no wrap, it's a single column/row of facets
+        return max(base_height, item_height * num_items) # Stacked height
+    if wrap_cols > 0 and num_items > 0:
+        num_rows = (num_items + wrap_cols - 1) // wrap_cols
+        return max(base_height, item_height * num_rows)
+    return base_height # Default fallback
 
 def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[str]:
     print(f"UTILS_GENERATE_PLOT: Received config: {config.model_dump_json(indent=0)}")
 
-    if df.empty: print("UTILS_GENERATE_PLOT_ERROR: DataFrame is empty."); return None
+    if df.empty:
+        print("UTILS_GENERATE_PLOT_ERROR: DataFrame is empty."); return None
 
     actual_plot_type = config.plot_type
-    if config.plot_type == "auto_categorical": actual_plot_type = "bar" # auto_categorical defaults to bar
+    if config.plot_type == "auto_categorical":
+        actual_plot_type = "bar"
 
-    # --- NATIVE PLOTLY PATHS ---
-    if actual_plot_type == "boxplot":
-        print("UTILS_NATIVE_PLOTLY: BOXPLOT with Plotly Express.")
-        try:
-            if not config.y_column or config.y_column not in df.columns or not pd.api.types.is_numeric_dtype(df[config.y_column]):
-                print(f"UTILS_NATIVE_PLOTLY_BOX_ERROR: Boxplot needs valid numeric y_column ('{config.y_column}')."); return None
-            
-            current_x_col = config.x_column if config.x_column and config.x_column in df.columns else None
-            current_color_col = config.color_by_column if config.color_by_column and config.color_by_column in df.columns else None
-            
-            xaxis_type_setting = 'auto'
-            if current_x_col:
-                if pd.api.types.is_string_dtype(df[current_x_col]) or pd.api.types.is_categorical_dtype(df[current_x_col]):
-                    xaxis_type_setting = 'category'
-                elif pd.api.types.is_numeric_dtype(df[current_x_col]) and df[current_x_col].nunique() <= 50:
-                     xaxis_type_setting = 'category' 
-            
-            final_main_title = config.title or f"Boxplot of {config.y_column}{' by ' + current_x_col if current_x_col else ''}"
-            final_x_label = config.xlabel or current_x_col or ""
-            final_y_label = config.ylabel or config.y_column
-            final_legend_title = current_color_col 
+    plot_df = df.copy() # Work with a copy to avoid modifying original session data
+    final_title_base = config.title or ""
+    additional_title_suffix = ""
+    fig = None # Initialize fig to None
 
-            plotly_fig_native = px.box(
-                df, x=current_x_col, y=config.y_column, color=current_color_col,
-                points="outliers"
+    # --- Plotly Express Plot Generation ---
+    try:
+        # Dynamic height calculation helper
+        def calculate_dynamic_height(base_height=450, item_height=200, num_items=0, wrap_cols=0):
+            if num_items <= 1 or wrap_cols == 0:
+                return base_height
+            num_rows = (num_items + wrap_cols - 1) // wrap_cols
+            return max(base_height, item_height * num_rows)
+
+        # Facet column wrap calculation helper
+        def get_facet_wrap_and_count(df_for_facet: pd.DataFrame, facet_col_name: Optional[str]):
+            wrap_val = 0
+            num_facets = 0
+            if facet_col_name and facet_col_name in df_for_facet.columns:
+                num_facets = df_for_facet[facet_col_name].nunique()
+                if num_facets > 2 and num_facets <= 12: # Sensible range for wrapping
+                    wrap_val = 2 if num_facets <= 4 else 3 if num_facets <= 9 else 4
+                elif num_facets > 12: # For very many facets, cap wrap to avoid tiny plots
+                    wrap_val = 4
+            return wrap_val, num_facets
+
+        if actual_plot_type == "line":
+            if not config.x_column or config.x_column not in plot_df.columns:
+                print(f"UTILS_PX_LINE_ERROR: Line chart needs valid x_column ('{config.x_column}')."); return None
+            
+            y_col_for_plot = config.y_column
+            current_color_col = config.color_by_column
+            y_axis_label = config.ylabel or y_col_for_plot or "Value"
+
+            if not final_title_base:
+                final_title_base = f"Line Plot of {y_col_for_plot or 'Value'} over {config.x_column}"
+
+            if current_color_col and config.aggregate_by_color_col_method and y_col_for_plot:
+                print(f"UTILS_PX_LINE: Aggregating '{y_col_for_plot}' by '{config.aggregate_by_color_col_method}'.")
+                if pd.api.types.is_datetime64_any_dtype(plot_df[config.x_column]):
+                    plot_df = plot_df.sort_values(by=config.x_column)
+                agg_op = config.aggregate_by_color_col_method
+                aggregated_df = plot_df.groupby(config.x_column, as_index=False, observed=True).agg(
+                    aggregated_y=(y_col_for_plot, agg_op)
+                )
+                plot_df = aggregated_df
+                y_col_for_plot = 'aggregated_y'
+                current_color_col = None # Aggregated, so no longer coloring by original
+                y_axis_label = f"{agg_op.capitalize()} of {config.y_column}"
+                additional_title_suffix += f" ({agg_op.capitalize()} across all {config.color_by_column}s)"
+            elif current_color_col and current_color_col in plot_df.columns:
+                plot_df, limited, suffix = _apply_category_limits(plot_df, config, current_color_col, y_col_for_plot)
+                if limited and suffix: additional_title_suffix += suffix
+
+            if pd.api.types.is_datetime64_any_dtype(plot_df[config.x_column]) or \
+               pd.api.types.is_numeric_dtype(plot_df[config.x_column]):
+                plot_df = plot_df.sort_values(by=config.x_column)
+            
+            facet_wrap, num_facets = get_facet_wrap_and_count(plot_df, config.facet_column)
+            dynamic_height = calculate_dynamic_height(num_items=num_facets, wrap_cols=facet_wrap)
+
+            fig = px.line(
+                plot_df, x=config.x_column, y=y_col_for_plot, color=current_color_col,
+                markers=True if plot_df[config.x_column].nunique() < 30 else False,
+                facet_col=config.facet_column, facet_row=config.facet_row, facet_col_wrap=facet_wrap,
+                height=dynamic_height
             )
-            
-            plotly_fig_native.update_layout(
-                title_text=final_main_title,
-                xaxis_title_text=final_x_label,
-                yaxis_title_text=final_y_label,
-                xaxis_type=xaxis_type_setting,
-                legend_title_text=final_legend_title if current_color_col else None
-            )
-            return pio.to_json(plotly_fig_native)
-        except Exception as e_native_px_box: print(f"UTILS_NATIVE_PLOTLY_BOX_ERROR: {e_native_px_box}"); traceback.print_exc(); return None
-    
-    elif actual_plot_type == "histogram":
-        print("UTILS_NATIVE_PLOTLY: HISTOGRAM with Plotly Express.")
-        try:
-            if not config.x_column or config.x_column not in df.columns or not pd.api.types.is_numeric_dtype(df[config.x_column]):
-                print(f"UTILS_NATIVE_PLOTLY_HIST_ERROR: Histogram needs valid numeric x_column ('{config.x_column}')."); return None
 
-            current_color_col = config.color_by_column if config.color_by_column and config.color_by_column in df.columns else None
-
-            final_main_title = config.title or f"Histogram of {config.x_column}{' by ' + current_color_col if current_color_col else ''}"
-            final_x_label = config.xlabel or config.x_column
-            final_y_label = config.ylabel or "Frequency"
-            final_legend_title = current_color_col
-
-            plotly_fig_native = px.histogram(
-                df, x=config.x_column, color=current_color_col, marginal="rug", nbins=config.bins
-            )
-            
-            plotly_fig_native.update_layout(
-                title_text=final_main_title,
-                xaxis_title_text=final_x_label,
-                yaxis_title_text=final_y_label,
-                bargap=0.1 if not current_color_col else 0.2, # Default for histogram
-                legend_title_text=final_legend_title if current_color_col else None
-            )
-            return pio.to_json(plotly_fig_native)
-        except Exception as e_native_px_hist: print(f"UTILS_NATIVE_PLOTLY_HIST_ERROR: {e_native_px_hist}"); traceback.print_exc(); return None
-
-    elif actual_plot_type == "bar":
-        print("UTILS_NATIVE_PLOTLY: BAR CHART with Plotly Express.")
-        try:
-            if not config.x_column or config.x_column not in df.columns:
-                print(f"UTILS_NATIVE_PLOTLY_BAR_ERROR: Bar chart needs valid x_column ('{config.x_column}').")
-                return None
+        elif actual_plot_type == "bar":
+            if not config.x_column or config.x_column not in plot_df.columns:
+                print(f"UTILS_PX_BAR_ERROR: Bar chart needs valid x_column ('{config.x_column}')."); return None
 
             current_x_col = config.x_column
-            current_y_col_config = config.y_column
-            current_color_col = config.color_by_column if config.color_by_column and config.color_by_column in df.columns else None
-            
-            num_x_categories = df[current_x_col].nunique()
-            
-            plot_df = df.copy() 
-            y_axis_label_final = config.ylabel 
-            y_col_for_plot = current_y_col_config
+            y_col_for_plot = config.y_column
+            current_color_col = config.color_by_column if config.color_by_column and config.color_by_column in plot_df.columns else None
+            y_axis_label = config.ylabel
             is_count_plot = False
+            temp_count_col_name = '_count_'
 
-            if not y_col_for_plot: 
-                print(f"UTILS_NATIVE_PLOTLY_BAR: Y-column not specified, creating a count plot for x='{current_x_col}'.")
+            if not final_title_base:
+                final_title_base = f"Bar Chart of {current_x_col}"
+                if current_color_col: final_title_base += f" by {current_color_col}"
+
+            if not y_col_for_plot or (y_col_for_plot in plot_df.columns and not pd.api.types.is_numeric_dtype(plot_df[y_col_for_plot])):
+                if y_col_for_plot: print(f"UTILS_PX_BAR_WARN: Y-column '{y_col_for_plot}' non-numeric. Using count.")
                 is_count_plot = True
-                count_col_name = '_count_'
                 group_by_cols = [current_x_col]
-                if current_color_col:
-                    group_by_cols.append(current_color_col)
-                
-                temp_counts_df = df.groupby(group_by_cols, observed=True).size().reset_index(name=count_col_name)
-                plot_df = temp_counts_df 
-                y_col_for_plot = count_col_name
-                if not y_axis_label_final: y_axis_label_final = "Count"
+                if current_color_col: group_by_cols.append(current_color_col)
+                plot_df = plot_df.groupby(group_by_cols, observed=True, as_index=False).size().rename(columns={'size': temp_count_col_name})
+                y_col_for_plot = temp_count_col_name
+                y_axis_label = y_axis_label or "Count"
+            elif y_col_for_plot: # y_col is valid and numeric
+                y_axis_label = y_axis_label or y_col_for_plot
+                if current_color_col: # Aggregate if color is also present
+                     plot_df = plot_df.groupby([current_x_col, current_color_col], observed=True, as_index=False)[y_col_for_plot].sum()
+
+            plot_df, limited_x, suffix_x = _apply_category_limits(plot_df, config, current_x_col, y_col_for_plot)
+            if limited_x and suffix_x: additional_title_suffix += suffix_x
             
-            elif current_y_col_config and current_y_col_config in df.columns:
-                if not pd.api.types.is_numeric_dtype(df[current_y_col_config]):
-                    print(f"UTILS_NATIVE_PLOTLY_BAR_WARN: Specified Y-column '{current_y_col_config}' is not numeric. Fallback to count plot on X.")
-                    is_count_plot = True
-                    count_col_name = '_count_fallback_'
-                    group_by_cols = [current_x_col]
-                    if current_color_col: group_by_cols.append(current_color_col)
-                    temp_counts_df = df.groupby(group_by_cols, observed=True).size().reset_index(name=count_col_name)
-                    plot_df = temp_counts_df
-                    y_col_for_plot = count_col_name
-                    if not y_axis_label_final: y_axis_label_final = "Count"
-                else:
-                    if not y_axis_label_final: y_axis_label_final = y_col_for_plot
-            else: 
-                print(f"UTILS_NATIVE_PLOTLY_BAR_ERROR: Specified y_column '{current_y_col_config}' not in DataFrame or invalid. Cannot plot.")
-                return None
+            if current_color_col and current_color_col in plot_df.columns:
+                plot_df, limited_color, suffix_color = _apply_category_limits(plot_df, config, current_color_col, y_col_for_plot)
+                if limited_color and suffix_color: additional_title_suffix += (", " if additional_title_suffix.strip() else "") + suffix_color.strip()
 
-            barmode_setting = 'group' 
-            if config.bar_style == "stacked":
-                barmode_setting = 'stack'
-            elif config.bar_style == "grouped":
-                barmode_setting = 'group'
-            elif current_color_col: 
-                barmode_setting = 'group' 
-            else: 
-                barmode_setting = 'relative'
-
-            final_main_title = config.title or f"Bar Chart of {current_x_col}{(' by ' + current_color_col) if current_color_col else ''}"
-            final_x_label = config.xlabel or current_x_col
-            final_legend_title = current_color_col 
-
-            plotly_fig_native = px.bar(
-                plot_df, 
-                x=current_x_col, 
-                y=y_col_for_plot, 
-                color=current_color_col,
-                barmode=barmode_setting
+            barmode = 'group' if current_color_col else 'relative'
+            if config.bar_style == "stacked": barmode = 'stack'
+            elif config.bar_style == "grouped": barmode = 'group'
+            
+            is_faceted_plot = bool(config.facet_column or config.facet_row)
+            facet_wrap, num_facets = get_facet_wrap_and_count(plot_df, config.facet_column or config.facet_row) # Check both
+            dynamic_height = calculate_dynamic_height(
+                num_items=num_facets,
+                wrap_cols=facet_wrap,
+                is_faceted=is_faceted_plot,
+                item_height=200 if is_faceted_plot else 450
             )
             
-            tickangle_setting = 0
-            categoryorder_setting = 'trace' 
-            if is_count_plot or (y_col_for_plot and not current_color_col):
-                categoryorder_setting = 'total descending'
-            
-            x_axis_layout = {
-                "title_text": final_x_label,
-                "type": 'category', 
-                "categoryorder": categoryorder_setting
-            }
-
-            if num_x_categories > 8 and num_x_categories <= 20:
-                tickangle_setting = -45
-            elif num_x_categories > 20:
-                tickangle_setting = -60
-            
-            if tickangle_setting != 0:
-                x_axis_layout["tickangle"] = tickangle_setting
-            
-            plotly_fig_native.update_layout(
-                title_text=final_main_title,
-                xaxis=x_axis_layout,
-                yaxis_title_text=y_axis_label_final,
-                legend_title_text=final_legend_title if current_color_col else None,
-                bargap=0.2
+            fig = px.bar(
+                plot_df, x=current_x_col, y=y_col_for_plot, color=current_color_col,
+                barmode=barmode, facet_col=config.facet_column, facet_row=config.facet_row, facet_col_wrap=facet_wrap,
+                height=dynamic_height
             )
-            return pio.to_json(plotly_fig_native)
-        except Exception as e_native_px_bar:
-            print(f"UTILS_NATIVE_PLOTLY_BAR_ERROR: {e_native_px_bar}")
-            traceback.print_exc()
-            return None
+            num_x_cats = plot_df[current_x_col].nunique()
+            fig.update_xaxes(type='category', categoryorder='total descending' if (is_count_plot or (y_col_for_plot and not current_color_col)) else 'trace',
+                             tickangle=-45 if num_x_cats > 8 else 0)
 
-    elif actual_plot_type in ["pie", "doughnut"]:
-        print(f"UTILS_NATIVE_PLOTLY: PIE/DOUGHNUT with Plotly Express.")
-        try:
+        elif actual_plot_type in ["pie", "doughnut"]:
             names_col = config.x_column
             values_col = config.y_column
+            if not names_col or names_col not in plot_df.columns:
+                print(f"UTILS_PX_PIE_ERROR: Pie/Doughnut needs 'names' column (from x_column)."); return None
 
-            if not names_col or names_col not in df.columns:
-                print(f"UTILS_NATIVE_PLOTLY_PIE_ERROR: Pie chart needs a valid 'names' column (from x_column)."); return None
-
-            plot_df = df
-            y_label = values_col
-            if not values_col or values_col not in df.columns:
-                print(f"UTILS_NATIVE_PLOTLY_PIE: Values column not specified, creating count-based pie chart for '{names_col}'.")
-                count_col = '_pie_count_'
-                plot_df = df.groupby(names_col, observed=True).size().reset_index(name=count_col)
-                values_col = count_col
-                y_label = "Count"
-            elif not pd.api.types.is_numeric_dtype(df[values_col]):
-                print(f"UTILS_NATIVE_PLOTLY_PIE_ERROR: Specified values_column '{values_col}' is not numeric."); return None
+            if not final_title_base: final_title_base = f"Proportion of {names_col}"
             
-            final_main_title = config.title or f"Proportion of {names_col}"
-            final_legend_title = config.color_by_column or names_col
+            if not values_col or (values_col in plot_df.columns and not pd.api.types.is_numeric_dtype(plot_df[values_col])):
+                if values_col: print(f"UTILS_PX_PIE_WARN: Values col '{values_col}' non-numeric. Using counts.")
+                temp_pie_count_col = '_pie_count_'
+                plot_df = plot_df.groupby(names_col, observed=True, as_index=False).size().rename(columns={'size': temp_pie_count_col})
+                values_col = temp_pie_count_col
+            
+            plot_df, limited_pie, suffix_pie = _apply_category_limits(plot_df, config, names_col, values_col)
+            if limited_pie and suffix_pie: additional_title_suffix += suffix_pie
 
-            plotly_fig_native = px.pie(
-                plot_df, 
-                names=names_col, 
-                values=values_col,
+            fig = px.pie(
+                plot_df, names=names_col, values=values_col,
                 hole=0.4 if actual_plot_type == "doughnut" else 0
             )
-            plotly_fig_native.update_traces(textposition='inside', textinfo='percent+label')
-            plotly_fig_native.update_layout(
-                title_text=final_main_title,
-                legend_title_text=final_legend_title,
-                uniformtext_minsize=12, 
-                uniformtext_mode='hide'
-            )
-            return pio.to_json(plotly_fig_native)
-        except Exception as e: print(f"UTILS_NATIVE_PLOTLY_PIE_ERROR: {e}"); traceback.print_exc(); return None
-        
-    elif actual_plot_type == "heatmap":
-        print("UTILS_NATIVE_PLOTLY: HEATMAP with Plotly Express.")
-        try:
-            if not config.x_column or config.x_column not in df.columns or not pd.api.types.is_numeric_dtype(df[config.x_column]):
-                print(f"UTILS_NATIVE_PLOTLY_HEATMAP_ERROR: Heatmap needs a valid numeric x_column ('{config.x_column}')."); return None
-            if not config.y_column or config.y_column not in df.columns or not pd.api.types.is_numeric_dtype(df[config.y_column]):
-                print(f"UTILS_NATIVE_PLOTLY_HEATMAP_ERROR: Heatmap needs a valid numeric y_column ('{config.y_column}')."); return None
+            fig.update_traces(textposition='inside', textinfo='percent+label')
+            fig.update_layout(uniformtext_minsize=10, uniformtext_mode='hide')
+
+        elif actual_plot_type == "histogram":
+            if not config.x_column or config.x_column not in plot_df.columns or not pd.api.types.is_numeric_dtype(plot_df[config.x_column]):
+                print(f"UTILS_PX_HIST_ERROR: Histogram needs numeric x_column ('{config.x_column}')."); return None
             
-            final_main_title = config.title or f"Heatmap of {config.y_column} vs. {config.x_column}"
-            final_x_label = config.xlabel or config.x_column
-            final_y_label = config.ylabel or config.y_column
+            if not final_title_base: final_title_base = f"Histogram of {config.x_column}"
+            current_color_col_hist = config.color_by_column if config.color_by_column and config.color_by_column in plot_df.columns else None
+
+            if current_color_col_hist:
+                 plot_df, limited, suffix = _apply_category_limits(plot_df, config, current_color_col_hist, None)
+                 if limited and suffix: additional_title_suffix += suffix
             
-            plotly_fig_native = px.density_heatmap(
-                df, x=config.x_column, y=config.y_column,
-                marginal_x="rug", marginal_y="rug"
-            )
-            plotly_fig_native.update_layout(
-                title_text=final_main_title,
-                xaxis_title_text=final_x_label,
-                yaxis_title_text=final_y_label,
-            )
-            return pio.to_json(plotly_fig_native)
-        except Exception as e: print(f"UTILS_NATIVE_PLOTLY_HEATMAP_ERROR: {e}"); traceback.print_exc(); return None
+            facet_wrap, num_facets = get_facet_wrap_and_count(plot_df, config.facet_column)
+            dynamic_height = calculate_dynamic_height(num_items=num_facets, wrap_cols=facet_wrap)
 
-    elif actual_plot_type == "dot_plot":
-        print("UTILS_NATIVE_PLOTLY: DOT PLOT (Strip) with Plotly Express.")
-        try:
-            y_col = config.y_column
-            x_col = config.x_column
-            color_col = config.color_by_column
+            fig = px.histogram(
+                plot_df, x=config.x_column, color=current_color_col_hist, nbins=config.bins, marginal="rug",
+                facet_col=config.facet_column, facet_row=config.facet_row, facet_col_wrap=facet_wrap,
+                height=dynamic_height
+            )
+            fig.update_layout(bargap=0.1, yaxis_title_text=config.ylabel or "Frequency")
+
+
+        elif actual_plot_type == "boxplot":
+            if not config.y_column or config.y_column not in plot_df.columns or not pd.api.types.is_numeric_dtype(plot_df[config.y_column]):
+                print(f"UTILS_PX_BOX_ERROR: Boxplot needs numeric y_column ('{config.y_column}')."); return None
             
-            if not y_col or y_col not in df.columns or not pd.api.types.is_numeric_dtype(df[y_col]):
-                print(f"UTILS_NATIVE_PLOTLY_DOT_ERROR: Dot plot requires a numeric y_column ('{y_col}')."); return None
-            if x_col and x_col not in df.columns: x_col = None
-            if color_col and color_col not in df.columns: color_col = None
+            current_x_col_box = config.x_column if config.x_column and config.x_column in plot_df.columns else None
+            current_color_col_box = config.color_by_column if config.color_by_column and config.color_by_column in plot_df.columns else None
 
-            final_main_title = config.title or f"Distribution of {y_col}{' by ' + x_col if x_col else ''}"
-            final_x_label = config.xlabel or x_col or ""
-            final_y_label = config.ylabel or y_col
+            if not final_title_base:
+                final_title_base = f"Boxplot of {config.y_column}"
+                if current_x_col_box: final_title_base += f" by {current_x_col_box}"
 
-            plotly_fig_native = px.strip(df, x=x_col, y=y_col, color=color_col)
-            plotly_fig_native.update_layout(
-                title_text=final_main_title,
-                xaxis_title_text=final_x_label,
-                yaxis_title_text=final_y_label,
-                legend_title_text=color_col if color_col else None
+            if current_x_col_box and not pd.api.types.is_numeric_dtype(plot_df[current_x_col_box]):
+                 plot_df, limited, suffix = _apply_category_limits(plot_df, config, current_x_col_box, config.y_column)
+                 if limited and suffix: additional_title_suffix += suffix
+            
+            if current_color_col_box:
+                 plot_df, limited, suffix = _apply_category_limits(plot_df, config, current_color_col_box, config.y_column)
+                 if limited and suffix: additional_title_suffix += (", " if additional_title_suffix.strip() else "") + suffix.strip()
+            
+            facet_wrap, num_facets = get_facet_wrap_and_count(plot_df, config.facet_column)
+            dynamic_height = calculate_dynamic_height(num_items=num_facets, wrap_cols=facet_wrap)
+
+            fig = px.box(
+                plot_df, x=current_x_col_box, y=config.y_column, color=current_color_col_box,
+                points="outliers", facet_col=config.facet_column, facet_row=config.facet_row, facet_col_wrap=facet_wrap,
+                height=dynamic_height
             )
-            return pio.to_json(plotly_fig_native)
-        except Exception as e: print(f"UTILS_NATIVE_PLOTLY_DOT_ERROR: {e}"); traceback.print_exc(); return None
-        
-    elif actual_plot_type == "cumulative_curve":
-        print("UTILS_NATIVE_PLOTLY: CUMULATIVE CURVE (ECDF) with Plotly Express.")
-        try:
-            if not config.x_column or config.x_column not in df.columns or not pd.api.types.is_numeric_dtype(df[config.x_column]):
-                print(f"UTILS_NATIVE_PLOTLY_ECDF_ERROR: Cumulative curve needs a numeric x_column ('{config.x_column}')."); return None
-            color_col = config.color_by_column if config.color_by_column and config.color_by_column in df.columns else None
+            fig.update_xaxes(type='category' if current_x_col_box and not pd.api.types.is_numeric_dtype(plot_df[current_x_col_box]) else 'auto')
 
-            final_main_title = config.title or f"Cumulative Distribution of {config.x_column}"
-            final_x_label = config.xlabel or config.x_column
-            final_y_label = config.ylabel or "Proportion"
+        elif actual_plot_type == "scatter":
+            if not config.x_column or config.x_column not in plot_df.columns or \
+               not config.y_column or config.y_column not in plot_df.columns or \
+               not pd.api.types.is_numeric_dtype(plot_df[config.x_column]) or \
+               not pd.api.types.is_numeric_dtype(plot_df[config.y_column]):
+                print(f"UTILS_PX_SCATTER_ERROR: Scatter needs numeric x ('{config.x_column}') & y ('{config.y_column}')."); return None
 
-            plotly_fig_native = px.ecdf(df, x=config.x_column, color=color_col)
-            plotly_fig_native.update_layout(
-                title_text=final_main_title,
-                xaxis_title_text=final_x_label,
-                yaxis_title_text=final_y_label,
-                legend_title_text=color_col if color_col else None
+            current_color_col_scatter = config.color_by_column if config.color_by_column and config.color_by_column in plot_df.columns else None
+            
+            if not final_title_base:
+                final_title_base = f"Scatter Plot of {config.y_column} vs. {config.x_column}"
+
+            if current_color_col_scatter:
+                 plot_df, limited, suffix = _apply_category_limits(plot_df, config, current_color_col_scatter, None)
+                 if limited and suffix: additional_title_suffix += suffix
+            
+            facet_wrap, num_facets = get_facet_wrap_and_count(plot_df, config.facet_column)
+            dynamic_height = calculate_dynamic_height(num_items=num_facets, wrap_cols=facet_wrap)
+            
+            fig = px.scatter(
+                plot_df, x=config.x_column, y=config.y_column, color=current_color_col_scatter,
+                marginal_y="violin", marginal_x="box",
+                facet_col=config.facet_column, facet_row=config.facet_row, facet_col_wrap=facet_wrap,
+                height=dynamic_height
             )
-            return pio.to_json(plotly_fig_native)
-        except Exception as e: print(f"UTILS_NATIVE_PLOTLY_ECDF_ERROR: {e}"); traceback.print_exc(); return None
+
+        elif actual_plot_type == "kde": # Using px.violin for 1D KDE-like, or density_contour for 2D
+             if not config.x_column or config.x_column not in plot_df.columns or not pd.api.types.is_numeric_dtype(plot_df[config.x_column]):
+                print(f"UTILS_PX_KDE_ERROR: KDE needs numeric x_column ('{config.x_column}')."); return None
+            
+             if not final_title_base: final_title_base = f"KDE Plot of {config.x_column}"
+             current_color_col_kde = config.color_by_column if config.color_by_column and config.color_by_column in plot_df.columns else None
+
+             if current_color_col_kde:
+                 plot_df, limited, suffix = _apply_category_limits(plot_df, config, current_color_col_kde, None)
+                 if limited and suffix: additional_title_suffix += suffix
+            
+             facet_wrap, num_facets = get_facet_wrap_and_count(plot_df, config.facet_column)
+             dynamic_height = calculate_dynamic_height(num_items=num_facets, wrap_cols=facet_wrap)
+
+             # If y_column is provided and numeric, use density_contour for 2D KDE
+             if config.y_column and config.y_column in plot_df.columns and pd.api.types.is_numeric_dtype(plot_df[config.y_column]):
+                 fig = px.density_contour(plot_df, x=config.x_column, y=config.y_column, color=current_color_col_kde,
+                                          marginal_x="rug", marginal_y="histogram",
+                                          facet_col=config.facet_column, facet_row=config.facet_row, facet_col_wrap=facet_wrap,
+                                          height=dynamic_height)
+                 fig.update_layout(yaxis_title_text=config.ylabel or config.y_column)
+             else: # Otherwise, use violin plot for a 1D KDE-like visualization
+                 fig = px.violin(plot_df, y=config.x_column, color=current_color_col_kde, box=True, points="all",
+                                 facet_col=config.facet_column, facet_row=config.facet_row, facet_col_wrap=facet_wrap,
+                                 height=dynamic_height)
+                 fig.update_layout(yaxis_title_text=config.ylabel or config.x_column, # Y-axis of violin is the data
+                                   xaxis_title_text="") # No categorical x for violin in this mode
 
 
-    # --- MATPLOTLIB/SEABORN PATH FOR OTHER PLOTS (KDE, Line, Scatter, Lollipop) ---
-    print(f"UTILS_MPL_PLOT: Matplotlib path for plot type: '{actual_plot_type}'")
-    fig_width=10; fig_height=6; xtick_rotation=0; xtick_ha='center'; xtick_fontsize=10
-    final_rect_bottom_margin=0.12; final_rect_right_margin=0.95; num_x_categories=0
-    
-    current_x_col_mpl = config.x_column
-    current_y_col_mpl = config.y_column
-    current_color_col_mpl = config.color_by_column
+        # Add other plot types here (heatmap, dot_plot, cumulative_curve, lollipop)
+        # For Lollipop, you might still prefer Matplotlib if px.bar with styling isn't sufficient.
+        # px.density_heatmap, px.strip, px.ecdf are available.
 
-    if actual_plot_type in ["kde", "line", "scatter", "lollipop"]:
-        if current_x_col_mpl and current_x_col_mpl in df.columns:
-            num_x_categories = df[current_x_col_mpl].nunique()
         else:
-            print(f"UTILS_MPL_ERR: X-col missing/not found for '{actual_plot_type}'."); return None
-    
-    if actual_plot_type == "lollipop":
-        if num_x_categories > 15: xtick_rotation, final_rect_bottom_margin = 45, 0.20
-        fig_height=max(6, num_x_categories*0.3) # Dynamic height
-    elif actual_plot_type == "kde":
-        fig_width,fig_height,final_rect_bottom_margin=12,7,0.15
-    elif actual_plot_type == "line" and num_x_categories > 15:
-        xtick_rotation = 30
-        final_rect_bottom_margin = 0.18
+            print(f"UTILS_GENERATE_PLOT_WARN: Plot type '{actual_plot_type}' not fully implemented with Plotly Express.")
+            # Matplotlib fallback (Simplified - consider if really needed or if px can cover)
+            # import matplotlib.pyplot as plt
+            # import seaborn as sns
+            # try:
+            #     # ... your existing Matplotlib code for specific plots like lollipop ...
+            #     # if actual_plot_type == "lollipop": ...
+            #     # fig_mpl, ax_mpl = plt.subplots(...)
+            #     # ... plotting ...
+            #     # plotly_fig_obj = plotly.tools.mpl_to_plotly(fig_mpl)
+            #     # plt.close(fig_mpl)
+            #     # fig = plotly_fig_obj
+            #     pass # Placeholder
+            # except Exception as e_mpl:
+            #     print(f"UTILS_MPL_FALLBACK_ERROR: {e_mpl}");
+            #     return None
+            return None # If not handled by px and no MPL fallback
 
+        # Final layout updates for all plots
+        if fig:
+            fig.update_layout(
+                title_text=final_title_base + additional_title_suffix,
+                xaxis_title_text=config.xlabel or config.x_column, # This might be overridden by specific plot logic
+                # yaxis_title_text is usually set by specific plot logic already
+                legend_title_text=config.color_by_column # This also might be overridden
+            )
+            # Clean up faceted subplot titles
+            if config.facet_column or config.facet_row:
+                fig.for_each_xaxis(lambda axis: axis.update(title=None))
+                fig.for_each_yaxis(lambda axis: axis.update(title=None))
+            
+            return pio.to_json(fig)
+        else:
+            print(f"UTILS_GENERATE_PLOT_ERROR: Figure object was not created for '{actual_plot_type}'.")
+            return None
 
-    print(f"UTILS_MPL_PLOT: type='{actual_plot_type}', fig_w={fig_width}, fig_h={fig_height}, rot={xtick_rotation}")
-    plt.style.use('seaborn-v0_8-whitegrid'); fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-
-    try:
-        if current_y_col_mpl and current_y_col_mpl not in df.columns: print(f"UTILS_MPL_ERR: Y-col '{current_y_col_mpl}' not found."); plt.close(fig); return None
-        if current_color_col_mpl and current_color_col_mpl not in df.columns: print(f"UTILS_MPL_ERR: Color-col '{current_color_col_mpl}' not found."); plt.close(fig); return None
-        plot_generated = False
-        
-        if actual_plot_type == "kde":
-            if not pd.api.types.is_numeric_dtype(df[current_x_col_mpl]): print(f"UTILS_MPL_ERR: KDE needs numeric X-col."); plt.close(fig);return None
-            sns.kdeplot(data=df, x=current_x_col_mpl, hue=current_color_col_mpl, fill=False, linewidth=2, ax=ax); plot_generated=True
-        elif actual_plot_type == "line": 
-            df_s=df.copy()
-            if current_x_col_mpl in df_s.columns and (pd.api.types.is_datetime64_any_dtype(df_s[current_x_col_mpl])or pd.api.types.is_numeric_dtype(df_s[current_x_col_mpl])): df_s=df_s.sort_values(by=current_x_col_mpl)
-            if not current_y_col_mpl:
-                cnt_col='_g_cnt_mpl';
-                if pd.api.types.is_numeric_dtype(df_s[current_x_col_mpl]): sns.lineplot(data=df_s,x=current_x_col_mpl,y=df_s.index,hue=current_color_col_mpl,marker='o',ax=ax);ax.set_ylabel(config.ylabel or "Index")
-                else: 
-                    if current_color_col_mpl: cnt_data=df_s.groupby([current_x_col_mpl,current_color_col_mpl],observed=False).size().reset_index(name=cnt_col); sns.lineplot(data=cnt_data,x=current_x_col_mpl,y=cnt_col,hue=current_color_col_mpl,marker='o',ax=ax)
-                    else: cnt_data=df_s.groupby(current_x_col_mpl,observed=False).size().reset_index(name=cnt_col); sns.lineplot(data=cnt_data,x=current_x_col_mpl,y=cnt_col,marker='o',ax=ax)
-                    ax.set_ylabel(config.ylabel or "Count")
-            else: sns.lineplot(data=df_s,x=current_x_col_mpl,y=current_y_col_mpl,hue=current_color_col_mpl,marker='o',ax=ax)
-            plot_generated=True
-        elif actual_plot_type == "scatter": 
-            if not current_y_col_mpl: print(f"UTILS_MPL_ERR: Scatter needs Y-col."); plt.close(fig);return None
-            if not pd.api.types.is_numeric_dtype(df[current_x_col_mpl]) or not pd.api.types.is_numeric_dtype(df[current_y_col_mpl]):
-                 print(f"UTILS_MPL_ERR: Scatter needs numeric X and Y columns."); plt.close(fig);return None
-            sns.scatterplot(data=df,x=current_x_col_mpl,y=current_y_col_mpl,hue=current_color_col_mpl,ax=ax);plot_generated=True
-        
-        elif actual_plot_type == "lollipop":
-            if not current_y_col_mpl or not pd.api.types.is_numeric_dtype(df[current_y_col_mpl]):
-                print(f"UTILS_MPL_ERR: Lollipop plot needs a numeric y_column."); plt.close(fig); return None
-            
-            plot_df = df.sort_values(by=current_y_col_mpl, ascending=False).reset_index(drop=True)
-            x_cats = plot_df[current_x_col_mpl]
-            x_indices = range(len(plot_df))
-            
-            ax.stem(x_indices, plot_df[current_y_col_mpl], linefmt='grey', markerfmt='o', basefmt=' ')
-            ax.set_xticks(x_indices)
-            ax.set_xticklabels(x_cats, rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
-            plot_generated=True
-
-        if not plot_generated:
-             print(f"UTILS_MPL_ERR: Plot not generated for type '{actual_plot_type}'. Could be an unhandled type or error in specific plot logic.");
-             plt.close(fig); return None
-
-        mpl_def_y_lab="Value"
-        if actual_plot_type=='kde': mpl_def_y_lab="Density"
-        
-        mpl_final_main_title = config.title or f"{actual_plot_type.capitalize()} Plot of {current_x_col_mpl if current_x_col_mpl else 'Data'}"
-        mpl_final_x_label = config.xlabel or current_x_col_mpl or ""
-        mpl_final_y_label = config.ylabel or current_y_col_mpl or mpl_def_y_lab
-        
-        ax.set_title(mpl_final_main_title, fontsize=14, wrap=True, pad=20)
-        ax.set_xlabel(mpl_final_x_label, fontsize=12)
-        ax.set_ylabel(mpl_final_y_label, fontsize=12)
-        
-        unique_x_categories_for_mpl_ticks = []
-        if actual_plot_type in ["line", "lollipop"] and current_x_col_mpl and current_x_col_mpl in df.columns:
-            if actual_plot_type == "lollipop":
-                # For lollipop, categories are already sorted and set
-                unique_x_categories_for_mpl_ticks = plot_df[current_x_col_mpl].tolist()
-            else: # For line plot
-                unique_x_categories_for_mpl_ticks = sorted(df[current_x_col_mpl].dropna().unique())
-
-            if 0 < len(unique_x_categories_for_mpl_ticks) <= 50:
-                # Tick setting for line plots (Lollipop already done)
-                if actual_plot_type == "line":
-                    if pd.api.types.is_numeric_dtype(df[current_x_col_mpl]):
-                        ax.set_xticks(unique_x_categories_for_mpl_ticks)
-                        ax.set_xticklabels([str(int(v)) if v == round(v) else f"{v:.2f}" if isinstance(v, float) else str(v) for v in unique_x_categories_for_mpl_ticks], rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
-                    else: 
-                        ax.set_xticks(range(len(unique_x_categories_for_mpl_ticks))) 
-                        ax.set_xticklabels([str(v) for v in unique_x_categories_for_mpl_ticks], rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
-                print(f"UTILS_MPL_PLOT: Set/used custom MPL ticks for X: '{current_x_col_mpl}'")
-            else: 
-                ax.tick_params(axis='x', labelsize=xtick_fontsize)
-                if xtick_rotation > 0: plt.setp(ax.get_xticklabels(), rotation=xtick_rotation, ha=xtick_ha)
-        elif current_x_col_mpl: 
-            ax.tick_params(axis='x', labelsize=xtick_fontsize)
-            if xtick_rotation > 0: plt.setp(ax.get_xticklabels(), rotation=xtick_rotation, ha=xtick_ha)
-        ax.tick_params(axis='y', labelsize=10)
-
-        leg = ax.get_legend(); 
-        if leg: leg.remove()
-        
-        try:
-            fig.tight_layout(rect=[0.08, final_rect_bottom_margin, final_rect_right_margin, 0.92])
-        except (ValueError, UserWarning):
-            fig.tight_layout()
-        
-        print("UTILS_MPL_PLOT: Converting Matplotlib fig to Plotly & applying comprehensive label fixes.")
-        try:
-            plotly_fig_obj: go.Figure = plotly.tools.mpl_to_plotly(fig) 
-            
-            final_plotly_main_title = ax.get_title()
-            final_plotly_x_label = ax.get_xlabel()
-            final_plotly_y_label = ax.get_ylabel()
-            
-            update_layout_dict = {
-                'title_text': final_plotly_main_title,
-                'xaxis_title_text': final_plotly_x_label,
-                'yaxis_title_text': final_plotly_y_label
-            }
-            
-            if current_color_col_mpl:
-                update_layout_dict['legend_title_text'] = current_color_col_mpl
-            
-            if actual_plot_type in ["line", "lollipop"] and current_x_col_mpl and current_x_col_mpl in df.columns:
-                if unique_x_categories_for_mpl_ticks: # From earlier logic
-                    plotly_categories = [str(v) for v in unique_x_categories_for_mpl_ticks]
-                    print(f"UTILS_MPL_PLOT_POST_CONV: Forcing Plotly x-axis: type='category', categoryarray for '{current_x_col_mpl}'.")
-                    
-                    update_layout_dict['xaxis_type'] = 'category'
-                    # For lollipop, order is based on value. For line, it's based on the original category order.
-                    update_layout_dict['xaxis_categoryorder'] = 'array'
-                    update_layout_dict['xaxis_categoryarray'] = plotly_categories
-                    update_layout_dict.update({'xaxis_tickvals': None, 'xaxis_ticktext': None, 'xaxis_tickmode': 'auto'})
-
-                    if xtick_rotation != 0: update_layout_dict['xaxis_tickangle'] = -xtick_rotation
-                    else: update_layout_dict['xaxis_tickangle'] = None
-                    
-                    if plotly_fig_obj.data:
-                        for trace in plotly_fig_obj.data:
-                            if hasattr(trace, 'x') and trace.x is not None:
-                                if len(trace.x) == len(plotly_categories):
-                                    print(f"UTILS_MPL_PLOT_POST_CONV: Aligning trace x-data with string categories for '{current_x_col_mpl}'.")
-                                    trace.x = plotly_categories
-                                else:
-                                    print(f"UTILS_MPL_PLOT_POST_CONV_WARN: Trace x-data for '{current_x_col_mpl}' (len {len(trace.x)}) "
-                                          f"does not directly match categoryarray (len {len(plotly_categories)}). Original trace.x: {trace.x[:5]}")
-            
-            plotly_fig_obj.update_layout(**update_layout_dict)
-            
-            print(f"UTILS_PLOTLY_FINAL: Main='{plotly_fig_obj.layout.title.text if plotly_fig_obj.layout.title else 'N/A'}', "
-                  f"X='{plotly_fig_obj.layout.xaxis.title.text if plotly_fig_obj.layout.xaxis.title else 'N/A'}', "
-                  f"Y='{plotly_fig_obj.layout.yaxis.title.text if plotly_fig_obj.layout.yaxis.title else 'N/A'}'")
-            return pio.to_json(plotly_fig_obj)
-        except Exception as e_conv: 
-            print(f"UTILS_MPL_PLOT_CONV_ERROR: {e_conv}"); traceback.print_exc(); return None
-        finally: plt.close(fig)
-    except Exception as e_mpl_main: 
-        print(f"UTILS_MPL_PLOT_MAIN_ERROR: {e_mpl_main}"); traceback.print_exc(); 
-        if 'fig' in locals() and hasattr(fig, 'number'): plt.close(fig)
+    except Exception as e_px_global:
+        print(f"UTILS_PX_PLOT_GLOBAL_ERROR: Unhandled error during Plotly Express generation for '{actual_plot_type}': {e_px_global}")
+        traceback.print_exc()
         return None
 
 def calculate_age_from_dob(df: pd.DataFrame, dob_column_name: str) -> Optional[pd.Series]:
-    print(f"UTILS: Parsing DOB: '{dob_column_name}'")
-    if dob_column_name not in df.columns: print(f"UTILS_DOB_ERR: Col not found."); return None
+    print(f"UTILS_DOB: Parsing DOB from column: '{dob_column_name}'")
+    if dob_column_name not in df.columns:
+        print(f"UTILS_DOB_ERR: Column '{dob_column_name}' not found in DataFrame."); return None
+    
     try:
+        # Attempt standard parsing
         dob_s = pd.to_datetime(df[dob_column_name], errors='coerce')
-        if dob_s.isnull().all():
-            dob_s_df = pd.to_datetime(df[dob_column_name], dayfirst=True, errors='coerce')
-            if dob_s_df.notna().sum() > 0 and (dob_s.notna().sum()==0 or dob_s_df.notna().sum()>dob_s.notna().sum()): dob_s=dob_s_df; print("UTILS: Used dayfirst parse for DOB.")
-        if dob_s.isnull().all(): print(f"UTILS_DOB_ERR: Cannot parse dates from '{dob_column_name}'."); return None
-        if dob_s.notnull().sum()==0: return None # Should be redundant due to previous check
-        today=pd.Timestamp(datetime.today()); age=today.year-dob_s.dt.year
-        # Account for month/day for exact age
-        mask=(dob_s.dt.month>today.month)|((dob_s.dt.month==today.month)&(dob_s.dt.day>today.day))
-        age=age-mask.astype(int).where(dob_s.notna(),pd.NA); # Ensure NA for NA DOBs
-        age=age.astype('Int64') # Use nullable integer type
-        if age.notnull().any():
-            stats=age.dropna().astype(float) # For stats, drop NA and convert to float
-            if not stats.empty: print(f"UTILS: Age stats for '{dob_column_name}': min={stats.min()}, max={stats.max()}, mean={stats.mean():.1f}")
-        return age
-    except Exception as e: print(f"UTILS_DOB_EXC: {e} for '{dob_column_name}'"); traceback.print_exc(); return None
+        
+        # If all are NaT or many are NaT, try with dayfirst=True
+        # This is a heuristic; more sophisticated date parsing might be needed for very mixed formats
+        if dob_s.isnull().all() or (dob_s.isnull().sum() > len(df) * 0.5 and len(df) > 0) : # If all or >50% are NaT
+            print(f"UTILS_DOB_INFO: Standard parsing of '{dob_column_name}' yielded many NaTs. Trying with dayfirst=True.")
+            dob_s_dayfirst = pd.to_datetime(df[dob_column_name], dayfirst=True, errors='coerce')
+            # Use dayfirst result if it has more valid (non-NaT) dates
+            if dob_s_dayfirst.notna().sum() > dob_s.notna().sum():
+                dob_s = dob_s_dayfirst
+                print(f"UTILS_DOB_INFO: Used dayfirst=True parsing for '{dob_column_name}'.")
+
+        if dob_s.isnull().all(): # Check again after potential dayfirst attempt
+            print(f"UTILS_DOB_ERR: Cannot parse any valid dates from '{dob_column_name}' even with dayfirst=True attempt."); return None
+        
+        # Filter out future dates of birth, as they are invalid for age calculation
+        today_dt = datetime.today()
+        valid_dob_s = dob_s[dob_s <= pd.Timestamp(today_dt)]
+        if len(valid_dob_s) < len(dob_s):
+            print(f"UTILS_DOB_WARN: Filtered out {len(dob_s) - len(valid_dob_s)} future DOBs from '{dob_column_name}'.")
+        
+        if valid_dob_s.empty and not dob_s.isnull().all(): # All DOBs were future dates or unparseable
+             print(f"UTILS_DOB_ERR: No valid past/present DOBs found in '{dob_column_name}' for age calculation."); return None
+        elif valid_dob_s.empty and dob_s.isnull().all(): # All were unparseable initially
+             print(f"UTILS_DOB_ERR: All DOBs were unparseable in '{dob_column_name}'."); return None
+
+
+        # Calculate age based on valid DOBs
+        # Ensure we are operating on a Series that aligns with the original DataFrame's index
+        age_series = pd.Series(index=df.index, dtype='Int64')
+
+        # Calculate age for valid, non-NaT DOBs
+        # Ensure 'today_dt' is timezone-naive if 'valid_dob_s.dt' is timezone-naive, or vice-versa
+        if valid_dob_s.dt.tz is not None:
+            today_ts = pd.Timestamp(today_dt, tz=valid_dob_s.dt.tz)
+        else:
+            today_ts = pd.Timestamp(today_dt)
+
+
+        # Vectorized age calculation
+        # Subtracting years
+        age = today_ts.year - valid_dob_s.dt.year
+        
+        # Adjust for month/day for those whose birthday hasn't occurred yet this year
+        # Condition for adjustment: (birth_month > current_month) OR (birth_month == current_month AND birth_day > current_day)
+        month_day_adjustment_needed = \
+            (valid_dob_s.dt.month > today_ts.month) | \
+            ((valid_dob_s.dt.month == today_ts.month) & (valid_dob_s.dt.day > today_ts.day))
+        
+        age_adjusted = age - month_day_adjustment_needed.astype(int)
+        
+        # Assign calculated ages to the full-indexed series
+        age_series.loc[valid_dob_s.index] = age_adjusted
+        
+        if age_series.notnull().any():
+            stats = age_series.dropna().astype(float) 
+            if not stats.empty: 
+                print(f"UTILS_DOB: Age stats for '{dob_column_name}': min={stats.min()}, max={stats.max()}, mean={stats.mean():.1f}, NaNs (unparseable/future)={age_series.isnull().sum()}")
+        else:
+            print(f"UTILS_DOB_INFO: All ages calculated as NaT for '{dob_column_name}'. Original NaNs in DOB col: {df[dob_column_name].isnull().sum()}, Unparseable/Future: {age_series.isnull().sum()}")
+            
+        return age_series
+    except Exception as e: 
+        print(f"UTILS_DOB_EXC: Exception during age calculation for '{dob_column_name}': {e}"); traceback.print_exc(); return None
+# --- END OF FILE utils.py ---

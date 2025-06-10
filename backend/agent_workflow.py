@@ -1,5 +1,3 @@
-# --- START OF FILE agent_workflow.py ---
-
 import os
 import pandas as pd
 from typing import TypedDict, List, Optional, Tuple, Type
@@ -7,31 +5,25 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, ValidationError
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
-from backend.utils import generate_plot_from_config, calculate_age_from_dob # Assuming these are in your project
-from backend.models import PlotConfig # Assuming this is in your project
+from backend.utils import generate_plot_from_config, calculate_age_from_dob  
+from backend.models import PlotConfig 
 import numpy as np
 import traceback
 import json
 from openai import AsyncAzureOpenAI
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_core.messages import BaseMessage
-import httpx # For custom HTTP client with proxy
-import asyncio # For running async code if needed from sync context
+import httpx  
+import asyncio  
 
 # Load environment variables
 dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path)
 
-# Get Azure OpenAI connection details from environment
 llm_azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
 llm_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-llm_api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-01-01-preview") # Default if not set
+llm_api_version = os.environ.get("AZURE_OPENAI_API_VERSION") # Default if not set
 llm_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-
-# Get Proxy details from environment (optional)
-# Prefers HTTPS_PROXY, then HTTP_PROXY
-# PROXY_URI = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or os.environ.get("TARGET_URI")
-
 openai_client: Optional[AsyncAzureOpenAI] = None
 custom_http_client_for_openai: Optional[httpx.AsyncClient] = None
 
@@ -401,7 +393,16 @@ async def visualization_node(state: AgentState) -> AgentState:
         cardinality_info_dict = {col: df_full[col].nunique() for col in df_columns_list if col in df_full}
         cardinality_prompt_str = "\n".join([f"  - Column '{col}': {count} unique values" for col, count in cardinality_info_dict.items()])
         
-        system_prompt_for_plot_config = f"""You are an expert data visualization advisor. Your goal is to choose the BEST and MOST READABLE plot configuration based on the user's query and the provided data characteristics.
+        # In agent_workflow.py, within visualization_node:
+
+        # ... (existing code) ...
+        cardinality_info_dict = {col: df_full[col].nunique() for col in df_columns_list if col in df_full}
+        cardinality_prompt_str = "\n".join([f"  - Column '{col}': {count} unique values" for col, count in cardinality_info_dict.items()])
+        
+        # In agent_workflow.py, within visualization_node:
+# ... (existing parts of the prompt) ...
+
+        system_prompt_for_plot_config = f"""You are an expert data visualization advisor. Your PRIMARY GOAL is to create plots that are EXTREMELY CLEAR, READABLE, and INSIGHTFUL for a non-expert user. AVOID CLUTTER AT ALL COSTS.
 Output your choice strictly using the PlotConfig schema.
 
 Data Context:
@@ -414,11 +415,36 @@ Data Context:
 
 User request: "{{prompt_user_query}}"
 
-Decision Guidelines for Plot Type and Configuration:
-... (rest of the detailed prompt from original file, unchanged) ...
-Available plot types in PlotConfig: "bar", "line", "scatter", "histogram", "boxplot", "kde", "auto_categorical", "heatmap", "dot_plot", "cumulative_curve", "lollipop", "pie", "doughnut".
-Ensure all fields in PlotConfig are populated if they are relevant to the chosen plot type.
-""" # Ensure your full prompt is here
+Decision Guidelines for Plot Type and Configuration - READABILITY IS PARAMOUNT:
+
+1.  **LINE CHARTS and SCATTER PLOTS with `color_by_column` (e.g., multiple 'Usuarios', 'Products', 'Categories'):**
+    *   **ASSESS CARDINALITY of `color_by_column` (let's call this `NumColors`):**
+    *   **If `NumColors` is 1:** Plot directly.
+    *   **If `NumColors` is 2 to 8 (MAXIMUM for easy comparison):**
+        *   **YOUR STRONGEST PREFERENCE AND DEFAULT MUST BE FACETING: Set `facet_column = <name_of_color_by_column>`.** This creates separate, small, clear charts for each category. This is MUCH better than overlapping lines. The title must indicate faceting (e.g., "Metric Over Time (Faceted by Usuario)").
+    *   **If `NumColors` is greater than 8 (or if faceting 8 is still too busy for the screen):**
+        *   **Option A (Top-N WITH Faceting):** Choose a small `top_n_categories` (e.g., 3 to 5) for the `color_by_column` AND set `facet_column = <name_of_color_by_column>`. Title: "Metric Over Time (Top 5 Usuarios, Faceted)".
+        *   **Option B (Aggregation):** If individual trends are less important than an overall picture, set `aggregate_by_color_col_method` to 'mean', 'median', or 'sum'. This plots ONE summary line. Title: "Average Metric Over Time (Across All Usuarios)".
+        *   **Option C (Strict Top-N on SINGLE AXIS - LAST RESORT for lines/scatter):** If and ONLY IF options A and B are unsuitable, you can use `top_n_categories` for the `color_by_column` on a single axis, but this number MUST BE VERY SMALL (e.g., 2 or 3, ABSOLUTELY NO MORE THAN 4). Title: "Metric Over Time (Top 3 Usuarios)".
+    *   **AVOID AT ALL COSTS:** Do NOT plot more than 3-4 potentially overlapping lines or dense scatter groups on a single chart without faceting. It is unreadable. If the user asks for "all," and "all" means >4, you MUST choose faceting, aggregation, or Top-N + Faceting.
+
+2.  **BAR CHARTS:**
+    *   If `x_column` (categorical) has high cardinality (>12-15), use `top_n_categories` (e.g., Top 10) for `x_column`.
+    *   If `color_by_column` is used with `bar_style='grouped'` and has > 4-5 categories, consider `bar_style='stacked'`, `facet_column = color_by_column`, or `top_n_categories` for `color_by_column`.
+
+3.  **PIE/DOUGHNUT CHARTS:**
+    *   Only for a few categories (< 7). If `x_column` has more, use `top_n_categories` (e.g., Top 5, with remaining grouped as "Others" if possible, otherwise just Top 5).
+
+4.  **TITLES ARE CRUCIAL:**
+    *   The `title` field in `PlotConfig` MUST accurately reflect what is being plotted, including any faceting, aggregation, or Top-N selection. For example:
+        *   "Horas gastas ao longo do tempo (Faceted por Top 7 Usuários)"
+        *   "Média de Horas gastas ao longo do tempo por todos Usuários"
+        *   "Horas gastas ao longo do tempo (Top 3 Usuários)"
+
+5.  **`limit_categories_auto`**: Consider this only if no other specific strategy (faceting, explicit top_n, aggregation) is chosen by you, AND a column's cardinality is too high for the chosen plot type. It's a safety net for readability.
+
+Your primary duty is to translate the user's request into the MOST UNDERSTANDABLE visual, even if it means not plotting every single data point they might have implicitly asked for if doing so compromises clarity.
+"""        
         viz_prompt_template = ChatPromptTemplate.from_messages([
             ("system", system_prompt_for_plot_config),
             ("human", "Based on my request and the data context provided, suggest the most suitable and readable plot configuration using the PlotConfig schema.")
