@@ -1,19 +1,17 @@
- 
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Optional
 from datetime import datetime
-from backend.models import PlotConfig # Assuming models.py is in backend folder
+from backend.models import PlotConfig 
 import traceback
 import numpy as np
 import plotly.tools
-import plotly.io as pio # For converting to JSON
+import plotly.io as pio
 import plotly.express as px # For native Plotly plots
 import plotly.graph_objects as go # Import graph_objects for Layout
 
 def _reshape_for_stacked_bar(df: pd.DataFrame, x_col: str, y_col: Optional[str], color_by_col: str, aggfunc=np.sum) -> Optional[pd.DataFrame]:
-    # (This function is assumed correct and remains unchanged from your version)
     try:
         if y_col:
             if not pd.api.types.is_numeric_dtype(df[y_col]): print(f"UTILS_RESHAPE_ERROR: y_column '{y_col}' not numeric."); return None
@@ -29,9 +27,6 @@ def _reshape_for_stacked_bar(df: pd.DataFrame, x_col: str, y_col: Optional[str],
     except Exception as e: print(f"UTILS_RESHAPE_CRITICAL_ERROR: {e}"); traceback.print_exc(); return None
 
 def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[str]:
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    print("UTILS_GENERATE_PLOT: NATIVE PLOTLY + MPL w/ TRACE DATA ALIGNMENT V6 (Native PX Bar)")
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
     print(f"UTILS_GENERATE_PLOT: Received config: {config.model_dump_json(indent=0)}")
 
     if df.empty: print("UTILS_GENERATE_PLOT_ERROR: DataFrame is empty."); return None
@@ -175,21 +170,19 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
             
             tickangle_setting = 0
             categoryorder_setting = 'trace' 
-            if is_count_plot:
-                 # For count plots, sorting by frequency (total count) is often best
+            if is_count_plot or (y_col_for_plot and not current_color_col):
                 categoryorder_setting = 'total descending'
             
-            # Update X-axis
             x_axis_layout = {
                 "title_text": final_x_label,
                 "type": 'category', 
                 "categoryorder": categoryorder_setting
             }
 
-            if num_x_categories > 8 and num_x_categories <= 20: # Adjusted threshold
+            if num_x_categories > 8 and num_x_categories <= 20:
                 tickangle_setting = -45
-            elif num_x_categories > 20: # Adjusted threshold
-                tickangle_setting = -60 # Slightly less extreme than -90 initially
+            elif num_x_categories > 20:
+                tickangle_setting = -60
             
             if tickangle_setting != 0:
                 x_axis_layout["tickangle"] = tickangle_setting
@@ -199,7 +192,7 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
                 xaxis=x_axis_layout,
                 yaxis_title_text=y_axis_label_final,
                 legend_title_text=final_legend_title if current_color_col else None,
-                bargap=0.2 # Default gap for bar charts
+                bargap=0.2
             )
             return pio.to_json(plotly_fig_native)
         except Exception as e_native_px_bar:
@@ -207,7 +200,118 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
             traceback.print_exc()
             return None
 
-    # --- MATPLOTLIB/SEABORN PATH FOR OTHER PLOTS (KDE, Line, Scatter) ---
+    elif actual_plot_type in ["pie", "doughnut"]:
+        print(f"UTILS_NATIVE_PLOTLY: PIE/DOUGHNUT with Plotly Express.")
+        try:
+            names_col = config.x_column
+            values_col = config.y_column
+
+            if not names_col or names_col not in df.columns:
+                print(f"UTILS_NATIVE_PLOTLY_PIE_ERROR: Pie chart needs a valid 'names' column (from x_column)."); return None
+
+            plot_df = df
+            y_label = values_col
+            if not values_col or values_col not in df.columns:
+                print(f"UTILS_NATIVE_PLOTLY_PIE: Values column not specified, creating count-based pie chart for '{names_col}'.")
+                count_col = '_pie_count_'
+                plot_df = df.groupby(names_col, observed=True).size().reset_index(name=count_col)
+                values_col = count_col
+                y_label = "Count"
+            elif not pd.api.types.is_numeric_dtype(df[values_col]):
+                print(f"UTILS_NATIVE_PLOTLY_PIE_ERROR: Specified values_column '{values_col}' is not numeric."); return None
+            
+            final_main_title = config.title or f"Proportion of {names_col}"
+            final_legend_title = config.color_by_column or names_col
+
+            plotly_fig_native = px.pie(
+                plot_df, 
+                names=names_col, 
+                values=values_col,
+                hole=0.4 if actual_plot_type == "doughnut" else 0
+            )
+            plotly_fig_native.update_traces(textposition='inside', textinfo='percent+label')
+            plotly_fig_native.update_layout(
+                title_text=final_main_title,
+                legend_title_text=final_legend_title,
+                uniformtext_minsize=12, 
+                uniformtext_mode='hide'
+            )
+            return pio.to_json(plotly_fig_native)
+        except Exception as e: print(f"UTILS_NATIVE_PLOTLY_PIE_ERROR: {e}"); traceback.print_exc(); return None
+        
+    elif actual_plot_type == "heatmap":
+        print("UTILS_NATIVE_PLOTLY: HEATMAP with Plotly Express.")
+        try:
+            if not config.x_column or config.x_column not in df.columns or not pd.api.types.is_numeric_dtype(df[config.x_column]):
+                print(f"UTILS_NATIVE_PLOTLY_HEATMAP_ERROR: Heatmap needs a valid numeric x_column ('{config.x_column}')."); return None
+            if not config.y_column or config.y_column not in df.columns or not pd.api.types.is_numeric_dtype(df[config.y_column]):
+                print(f"UTILS_NATIVE_PLOTLY_HEATMAP_ERROR: Heatmap needs a valid numeric y_column ('{config.y_column}')."); return None
+            
+            final_main_title = config.title or f"Heatmap of {config.y_column} vs. {config.x_column}"
+            final_x_label = config.xlabel or config.x_column
+            final_y_label = config.ylabel or config.y_column
+            
+            plotly_fig_native = px.density_heatmap(
+                df, x=config.x_column, y=config.y_column,
+                marginal_x="rug", marginal_y="rug"
+            )
+            plotly_fig_native.update_layout(
+                title_text=final_main_title,
+                xaxis_title_text=final_x_label,
+                yaxis_title_text=final_y_label,
+            )
+            return pio.to_json(plotly_fig_native)
+        except Exception as e: print(f"UTILS_NATIVE_PLOTLY_HEATMAP_ERROR: {e}"); traceback.print_exc(); return None
+
+    elif actual_plot_type == "dot_plot":
+        print("UTILS_NATIVE_PLOTLY: DOT PLOT (Strip) with Plotly Express.")
+        try:
+            y_col = config.y_column
+            x_col = config.x_column
+            color_col = config.color_by_column
+            
+            if not y_col or y_col not in df.columns or not pd.api.types.is_numeric_dtype(df[y_col]):
+                print(f"UTILS_NATIVE_PLOTLY_DOT_ERROR: Dot plot requires a numeric y_column ('{y_col}')."); return None
+            if x_col and x_col not in df.columns: x_col = None
+            if color_col and color_col not in df.columns: color_col = None
+
+            final_main_title = config.title or f"Distribution of {y_col}{' by ' + x_col if x_col else ''}"
+            final_x_label = config.xlabel or x_col or ""
+            final_y_label = config.ylabel or y_col
+
+            plotly_fig_native = px.strip(df, x=x_col, y=y_col, color=color_col)
+            plotly_fig_native.update_layout(
+                title_text=final_main_title,
+                xaxis_title_text=final_x_label,
+                yaxis_title_text=final_y_label,
+                legend_title_text=color_col if color_col else None
+            )
+            return pio.to_json(plotly_fig_native)
+        except Exception as e: print(f"UTILS_NATIVE_PLOTLY_DOT_ERROR: {e}"); traceback.print_exc(); return None
+        
+    elif actual_plot_type == "cumulative_curve":
+        print("UTILS_NATIVE_PLOTLY: CUMULATIVE CURVE (ECDF) with Plotly Express.")
+        try:
+            if not config.x_column or config.x_column not in df.columns or not pd.api.types.is_numeric_dtype(df[config.x_column]):
+                print(f"UTILS_NATIVE_PLOTLY_ECDF_ERROR: Cumulative curve needs a numeric x_column ('{config.x_column}')."); return None
+            color_col = config.color_by_column if config.color_by_column and config.color_by_column in df.columns else None
+
+            final_main_title = config.title or f"Cumulative Distribution of {config.x_column}"
+            final_x_label = config.xlabel or config.x_column
+            final_y_label = config.ylabel or "Proportion"
+
+            plotly_fig_native = px.ecdf(df, x=config.x_column, color=color_col)
+            plotly_fig_native.update_layout(
+                title_text=final_main_title,
+                xaxis_title_text=final_x_label,
+                yaxis_title_text=final_y_label,
+                legend_title_text=color_col if color_col else None
+            )
+            return pio.to_json(plotly_fig_native)
+        except Exception as e: print(f"UTILS_NATIVE_PLOTLY_ECDF_ERROR: {e}"); traceback.print_exc(); return None
+
+
+    # --- MATPLOTLIB/SEABORN PATH FOR OTHER PLOTS (KDE, Line, Scatter, Lollipop) ---
     print(f"UTILS_MPL_PLOT: Matplotlib path for plot type: '{actual_plot_type}'")
     fig_width=10; fig_height=6; xtick_rotation=0; xtick_ha='center'; xtick_fontsize=10
     final_rect_bottom_margin=0.12; final_rect_right_margin=0.95; num_x_categories=0
@@ -216,17 +320,18 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
     current_y_col_mpl = config.y_column
     current_color_col_mpl = config.color_by_column
 
-    # X-column is essential for these Matplotlib plot types
-    if actual_plot_type in ["kde", "line", "scatter"]: # Bar removed from this check
+    if actual_plot_type in ["kde", "line", "scatter", "lollipop"]:
         if current_x_col_mpl and current_x_col_mpl in df.columns:
             num_x_categories = df[current_x_col_mpl].nunique()
         else:
             print(f"UTILS_MPL_ERR: X-col missing/not found for '{actual_plot_type}'."); return None
     
-    # Specific sizing adjustments (Bar chart sizing removed from here)
-    if actual_plot_type == "kde":
+    if actual_plot_type == "lollipop":
+        if num_x_categories > 15: xtick_rotation, final_rect_bottom_margin = 45, 0.20
+        fig_height=max(6, num_x_categories*0.3) # Dynamic height
+    elif actual_plot_type == "kde":
         fig_width,fig_height,final_rect_bottom_margin=12,7,0.15
-    elif actual_plot_type == "line" and num_x_categories > 15: # Example for line if many points
+    elif actual_plot_type == "line" and num_x_categories > 15:
         xtick_rotation = 30
         final_rect_bottom_margin = 0.18
 
@@ -239,7 +344,6 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
         if current_color_col_mpl and current_color_col_mpl not in df.columns: print(f"UTILS_MPL_ERR: Color-col '{current_color_col_mpl}' not found."); plt.close(fig); return None
         plot_generated = False
         
-        # Matplotlib plotting logic - Bar chart plotting removed from here
         if actual_plot_type == "kde":
             if not pd.api.types.is_numeric_dtype(df[current_x_col_mpl]): print(f"UTILS_MPL_ERR: KDE needs numeric X-col."); plt.close(fig);return None
             sns.kdeplot(data=df, x=current_x_col_mpl, hue=current_color_col_mpl, fill=False, linewidth=2, ax=ax); plot_generated=True
@@ -261,12 +365,24 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
                  print(f"UTILS_MPL_ERR: Scatter needs numeric X and Y columns."); plt.close(fig);return None
             sns.scatterplot(data=df,x=current_x_col_mpl,y=current_y_col_mpl,hue=current_color_col_mpl,ax=ax);plot_generated=True
         
+        elif actual_plot_type == "lollipop":
+            if not current_y_col_mpl or not pd.api.types.is_numeric_dtype(df[current_y_col_mpl]):
+                print(f"UTILS_MPL_ERR: Lollipop plot needs a numeric y_column."); plt.close(fig); return None
+            
+            plot_df = df.sort_values(by=current_y_col_mpl, ascending=False).reset_index(drop=True)
+            x_cats = plot_df[current_x_col_mpl]
+            x_indices = range(len(plot_df))
+            
+            ax.stem(x_indices, plot_df[current_y_col_mpl], linefmt='grey', markerfmt='o', basefmt=' ')
+            ax.set_xticks(x_indices)
+            ax.set_xticklabels(x_cats, rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
+            plot_generated=True
+
         if not plot_generated:
              print(f"UTILS_MPL_ERR: Plot not generated for type '{actual_plot_type}'. Could be an unhandled type or error in specific plot logic.");
              plt.close(fig); return None
 
         mpl_def_y_lab="Value"
-        # Removed bar-specific default y-label
         if actual_plot_type=='kde': mpl_def_y_lab="Density"
         
         mpl_final_main_title = config.title or f"{actual_plot_type.capitalize()} Plot of {current_x_col_mpl if current_x_col_mpl else 'Data'}"
@@ -278,17 +394,23 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
         ax.set_ylabel(mpl_final_y_label, fontsize=12)
         
         unique_x_categories_for_mpl_ticks = []
-        # Bar chart tick handling removed from here
-        if actual_plot_type in ["line"] and current_x_col_mpl and current_x_col_mpl in df.columns: # Adjusted this condition
-            unique_x_categories_for_mpl_ticks = sorted(df[current_x_col_mpl].dropna().unique())
-            if 0 < len(unique_x_categories_for_mpl_ticks) <= 50: 
-                if pd.api.types.is_numeric_dtype(df[current_x_col_mpl]):
-                    ax.set_xticks(unique_x_categories_for_mpl_ticks)
-                    ax.set_xticklabels([str(int(v)) if v == round(v) else f"{v:.2f}" if isinstance(v, float) else str(v) for v in unique_x_categories_for_mpl_ticks], rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
-                else: 
-                    ax.set_xticks(range(len(unique_x_categories_for_mpl_ticks))) 
-                    ax.set_xticklabels([str(v) for v in unique_x_categories_for_mpl_ticks], rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
-                print(f"UTILS_MPL_PLOT: Set custom MPL ticks for X: '{current_x_col_mpl}'")
+        if actual_plot_type in ["line", "lollipop"] and current_x_col_mpl and current_x_col_mpl in df.columns:
+            if actual_plot_type == "lollipop":
+                # For lollipop, categories are already sorted and set
+                unique_x_categories_for_mpl_ticks = plot_df[current_x_col_mpl].tolist()
+            else: # For line plot
+                unique_x_categories_for_mpl_ticks = sorted(df[current_x_col_mpl].dropna().unique())
+
+            if 0 < len(unique_x_categories_for_mpl_ticks) <= 50:
+                # Tick setting for line plots (Lollipop already done)
+                if actual_plot_type == "line":
+                    if pd.api.types.is_numeric_dtype(df[current_x_col_mpl]):
+                        ax.set_xticks(unique_x_categories_for_mpl_ticks)
+                        ax.set_xticklabels([str(int(v)) if v == round(v) else f"{v:.2f}" if isinstance(v, float) else str(v) for v in unique_x_categories_for_mpl_ticks], rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
+                    else: 
+                        ax.set_xticks(range(len(unique_x_categories_for_mpl_ticks))) 
+                        ax.set_xticklabels([str(v) for v in unique_x_categories_for_mpl_ticks], rotation=xtick_rotation, ha=xtick_ha, fontsize=xtick_fontsize)
+                print(f"UTILS_MPL_PLOT: Set/used custom MPL ticks for X: '{current_x_col_mpl}'")
             else: 
                 ax.tick_params(axis='x', labelsize=xtick_fontsize)
                 if xtick_rotation > 0: plt.setp(ax.get_xticklabels(), rotation=xtick_rotation, ha=xtick_ha)
@@ -302,8 +424,8 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
         
         try:
             fig.tight_layout(rect=[0.08, final_rect_bottom_margin, final_rect_right_margin, 0.92])
-        except ValueError: 
-            fig.tight_layout() 
+        except (ValueError, UserWarning):
+            fig.tight_layout()
         
         print("UTILS_MPL_PLOT: Converting Matplotlib fig to Plotly & applying comprehensive label fixes.")
         try:
@@ -322,13 +444,13 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
             if current_color_col_mpl:
                 update_layout_dict['legend_title_text'] = current_color_col_mpl
             
-            # Bar chart specific conversion fixes removed as bar charts are now native Plotly
-            if actual_plot_type in ["line"] and current_x_col_mpl and current_x_col_mpl in df.columns:
+            if actual_plot_type in ["line", "lollipop"] and current_x_col_mpl and current_x_col_mpl in df.columns:
                 if unique_x_categories_for_mpl_ticks: # From earlier logic
                     plotly_categories = [str(v) for v in unique_x_categories_for_mpl_ticks]
                     print(f"UTILS_MPL_PLOT_POST_CONV: Forcing Plotly x-axis: type='category', categoryarray for '{current_x_col_mpl}'.")
                     
                     update_layout_dict['xaxis_type'] = 'category'
+                    # For lollipop, order is based on value. For line, it's based on the original category order.
                     update_layout_dict['xaxis_categoryorder'] = 'array'
                     update_layout_dict['xaxis_categoryarray'] = plotly_categories
                     update_layout_dict.update({'xaxis_tickvals': None, 'xaxis_ticktext': None, 'xaxis_tickmode': 'auto'})
@@ -361,7 +483,6 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
         return None
 
 def calculate_age_from_dob(df: pd.DataFrame, dob_column_name: str) -> Optional[pd.Series]:
-    # (This function remains unchanged from your last working version)
     print(f"UTILS: Parsing DOB: '{dob_column_name}'")
     if dob_column_name not in df.columns: print(f"UTILS_DOB_ERR: Col not found."); return None
     try:
