@@ -343,18 +343,17 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
                  fig.update_layout(yaxis_title_text=config.ylabel or config.y_column)
              else: # Otherwise, use violin plot for a 1D KDE-like visualization
                  fig = px.violin(plot_df, y=config.x_column, color=current_color_col_kde, box=True, points="all",
-                                 facet_col=config.facet_column, facet_row=config.facet_row, facet_col_wrap=facet_wrap,
-                                 height=dynamic_height)
-                 fig.update_layout(yaxis_title_text=config.ylabel or config.x_column, # Y-axis of violin is the data
-                                   xaxis_title_text="") # No categorical x for violin in this mode
-
+                             facet_col=config.facet_column, facet_row=config.facet_row, facet_col_wrap=facet_wrap,
+                             height=dynamic_height)
+                 fig.update_layout(yaxis_title_text=config.ylabel or config.x_column,
+                               xaxis_title_text="")
 
         # Add other plot types here (heatmap, dot_plot, cumulative_curve, lollipop)
         # For Lollipop, you might still prefer Matplotlib if px.bar with styling isn't sufficient.
         # px.density_heatmap, px.strip, px.ecdf are available.
 
         else:
-            print(f"UTILS_GENERATE_PLOT_WARN: Plot type '{actual_plot_type}' not fully implemented with Plotly Express.")
+            print(f"UTILS_GENERATE_PLOT_WARN: Plot type '{actual_plot_type}' not handled by any 'elif' block.")
             # Matplotlib fallback (Simplified - consider if really needed or if px can cover)
             # import matplotlib.pyplot as plt
             # import seaborn as sns
@@ -376,17 +375,18 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
         if fig:
             fig.update_layout(
                 title_text=final_title_base + additional_title_suffix,
-                xaxis_title_text=config.xlabel or config.x_column, # This might be overridden by specific plot logic
-                # yaxis_title_text is usually set by specific plot logic already
-                legend_title_text=config.color_by_column # This also might be overridden
+                xaxis_title_text=config.xlabel or config.x_column,
+                legend_title_text=config.color_by_column
             )
             # Clean up faceted subplot titles
             if config.facet_column or config.facet_row:
                 fig.for_each_xaxis(lambda axis: axis.update(title=None))
                 fig.for_each_yaxis(lambda axis: axis.update(title=None))
-            
+
             return pio.to_json(fig)
         else:
+            # This now correctly catches the case where 'fig' was never assigned,
+            # including for unhandled plot types that fall through the 'else' above.
             print(f"UTILS_GENERATE_PLOT_ERROR: Figure object was not created for '{actual_plot_type}'.")
             return None
 
