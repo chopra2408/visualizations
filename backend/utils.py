@@ -102,12 +102,7 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
     # --- Plotly Express Plot Generation ---
     try:
         # Dynamic height calculation helper
-        def calculate_dynamic_height(base_height=450, item_height=200, num_items=0, wrap_cols=0):
-            if num_items <= 1 or wrap_cols == 0:
-                return base_height
-            num_rows = (num_items + wrap_cols - 1) // wrap_cols
-            return max(base_height, item_height * num_rows)
-
+        
         # Facet column wrap calculation helper
         def get_facet_wrap_and_count(df_for_facet: pd.DataFrame, facet_col_name: Optional[str]):
             wrap_val = 0
@@ -353,7 +348,7 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
         # px.density_heatmap, px.strip, px.ecdf are available.
 
         else:
-            print(f"UTILS_GENERATE_PLOT_WARN: Plot type '{actual_plot_type}' not handled by any 'elif' block.")
+            print(f"UTILS_GENERATE_PLOT_WARN: Plot type '{actual_plot_type}' is not handled by any specific 'elif' block.")
             # Matplotlib fallback (Simplified - consider if really needed or if px can cover)
             # import matplotlib.pyplot as plt
             # import seaborn as sns
@@ -376,17 +371,18 @@ def generate_plot_from_config(df: pd.DataFrame, config: PlotConfig) -> Optional[
             fig.update_layout(
                 title_text=final_title_base + additional_title_suffix,
                 xaxis_title_text=config.xlabel or config.x_column,
-                legend_title_text=config.color_by_column
+                # yaxis_title_text is usually set by specific plot logic already
+                legend_title_text=config.color_by_column # This also might be overridden
             )
             # Clean up faceted subplot titles
             if config.facet_column or config.facet_row:
                 fig.for_each_xaxis(lambda axis: axis.update(title=None))
                 fig.for_each_yaxis(lambda axis: axis.update(title=None))
-
+            
             return pio.to_json(fig)
         else:
-            # This now correctly catches the case where 'fig' was never assigned,
-            # including for unhandled plot types that fall through the 'else' above.
+            # This 'else' will now correctly catch cases where a plot was not created,
+            # either due to an error or because the plot type was not implemented.
             print(f"UTILS_GENERATE_PLOT_ERROR: Figure object was not created for '{actual_plot_type}'.")
             return None
 
