@@ -22,38 +22,29 @@ import io
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional
-from backend.models import FileInfo, QueryRequest
+from models import FileInfo, QueryRequest
 
 try:
-    from backend.agent_workflow import (
+    from agent_workflow import (
         run_agent, 
         stream_pre_agent_summary, 
         stream_qna_response, 
         RouteQuery, 
-        openai_client as agent_openai_client,  
-        _convert_lc_messages_to_openai_format,  
-        get_structured_output_from_openai  
+        llm as agent_llm,  # <--- Updated
+        get_structured_output  # <--- Updated
     )
     from langchain_core.prompts import ChatPromptTemplate  
-    if agent_openai_client is None:
-        print("WARNING: agent_workflow.openai_client is None. Agent features might be limited.")
-        agent_llm_for_router = None 
-    else:
-        agent_llm_for_router = agent_openai_client  
-
+    if agent_llm is None:
+        print("WARNING: agent_workflow.llm is None. Agent features might be limited.")
 except ImportError as e:
     print(f"WARNING: Could not import from agent_workflow or langchain_core.prompts: {e}. Using stubs for agent logic.")
     class RouteQuery(BaseModel): action: str; reasoning: Optional[str] = None
-    agent_openai_client = None
-    agent_llm_for_router = None
+    agent_llm = None
     ChatPromptTemplate = None
-    _convert_lc_messages_to_openai_format = lambda x: []
-    async def get_structured_output_from_openai(*args, **kwargs): return None, []
+    async def get_structured_output(*args, **kwargs): return None, []
     async def stream_pre_agent_summary(*args, **kwargs): yield json.dumps({"type":"system", "chunk":"Pre-summary stub"}) + "\n"
     async def stream_qna_response(*args, **kwargs): yield json.dumps({"type":"content", "chunk":"Q&A stub"}) + "\n"
     async def run_agent(*args, **kwargs): return {"response_type":"fallback", "content":"Agent stub", "error":None, "thinking_log_str": "Stub run"}
-
-
 
 import traceback
 import zipfile
@@ -99,82 +90,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # --- Data Stores ---
 data_store: dict[str, pd.DataFrame] = {}
 file_info_store: dict[str, FileInfo] = {}
-
-# --- Directory for Storing Client-Side Converted Screencasts (Optional) ---
-UPLOADED_SCREENCASTS_DIR = Path(__file__).parent / "uploaded_screencasts"
-UPLOADED_SCREENCASTS_DIR.mkdir(parents=True, exist_ok=True)
-logger.info(f"Directory for (optionally) storing client-converted screencasts: {UPLOADED_SCREENCASTS_DIR.resolve()}")
-
-
-# --- Screencast Endpoints (Simplified for Client-Side Conversion) ---
-@app.post("/screencast/upload/", tags=["Screencast (Client-Converted)"])
-async def upload_client_converted_screencast(
-    session_id: str = Form(...),
-    file: UploadFile = File(...)
-):
-    logger.info(f"Received client-converted screencast upload. Session: {session_id}, Filename: {file.filename}")
-    if not file.filename:
-        logger.warning("Client-converted screencast upload attempt with no filename.")
-        raise HTTPException(status_code=400, detail="Uploaded screencast file has no name.")
-    original_stem = Path(file.filename).stem
-    original_ext = Path(file.filename).suffix or ".bin"
-    unique_id = uuid.uuid4().hex[:8]
-    stored_filename = f"{original_stem}_{session_id}_{unique_id}{original_ext}"
-    stored_file_path = UPLOADED_SCREENCASTS_DIR / stored_filename
-    try:
-        with stored_file_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        logger.info(f"Client-converted screencast '{file.filename}' saved as '{stored_filename}'")
-        return JSONResponse(
-            status_code=201,
-            content={
-                "message": "Client-converted file uploaded successfully.",
-                "original_filename": file.filename,
-                "uploaded_filename_on_server": stored_filename,
-                "download_url_relative_path": f"/screencast/download/{stored_filename}"
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error saving client-converted screencast: {e}", exc_info=True)
-        if stored_file_path.exists():
-            try: os.remove(stored_file_path)
-            except Exception as e_clean: logger.error(f"Failed to cleanup {stored_file_path} on error: {e_clean}")
-        raise HTTPException(status_code=500, detail=f"Server error saving uploaded screencast: {str(e)}")
-    finally:
-        await file.close()
-
-@app.get("/screencast/download/{filename}", tags=["Screencast (Client-Converted)"])
-async def download_client_converted_screencast(filename: str):
-    logger.info(f"Download requested for client-converted screencast: {filename}")
-    safe_filename = Path(filename).name
-    file_path = UPLOADED_SCREENCASTS_DIR / safe_filename
-    if not UPLOADED_SCREENCASTS_DIR.resolve() in file_path.resolve().parents:
-        logger.error(f"Attempted download outside of designated screencast dir: {filename}")
-        raise HTTPException(status_code=400, detail="Invalid filename for download.")
-    if not file_path.exists() or not file_path.is_file():
-        logger.warning(f"Client-converted screencast '{safe_filename}' not found. Path: {file_path}")
-        raise HTTPException(status_code=404, detail="File not found or was already cleaned up.")
-    media_type_map = {".mp4": "video/mp4", ".mkv": "video/x-matroska", ".webm": "video/webm"}
-    file_ext = file_path.suffix.lower()
-    media_type = media_type_map.get(file_ext, "application/octet-stream")
-    logger.info(f"Serving file {file_path} (media type: {media_type}) for download.")
-    return FileResponse(path=str(file_path), filename=safe_filename, media_type=media_type)
-
-@app.post("/screencast/cleanup_upload/{filename}", tags=["Screencast (Client-Converted)"])
-async def cleanup_uploaded_screencast_file(filename: str, background_tasks: BackgroundTasks):
-    logger.info(f"Explicit cleanup requested for uploaded screencast: {filename}")
-    safe_filename = Path(filename).name
-    file_path = UPLOADED_SCREENCASTS_DIR / safe_filename
-    if not UPLOADED_SCREENCASTS_DIR.resolve() in file_path.resolve().parents:
-        logger.error(f"Attempted cleanup outside of designated screencast dir: {filename}")
-        raise HTTPException(status_code=400, detail="Invalid filename for cleanup.")
-    if file_path.exists() and file_path.is_file():
-        logger.info(f"Scheduling cleanup for uploaded file: {file_path.name}")
-        background_tasks.add_task(os.remove, file_path)
-        return JSONResponse(status_code=200, content={"message": f"Cleanup initiated for {safe_filename}."})
-    else:
-        logger.warning(f"Uploaded file '{safe_filename}' not found for explicit cleanup. Path: {file_path}")
-        return JSONResponse(status_code=200, content={"message": "File not found or already cleaned up."})
 
 # --- Existing Endpoints (Data File and Agent Processing) ---
 @app.get("/", tags=["General"])
@@ -261,10 +176,8 @@ async def process_query(request: QueryRequest):
     action_type_for_routing = "query_data" # Default
 
     try:
-        # Using the direct get_structured_output_from_openai from agent_workflow
-        if agent_openai_client and ChatPromptTemplate and RouteQuery and get_structured_output_from_openai:
-            # This router logic is now simplified to directly use the helper from agent_workflow
-            # This matches how agent_workflow.py's router_node works.
+        # Check for the new agent_llm and get_structured_output
+        if agent_llm and ChatPromptTemplate and RouteQuery and get_structured_output:
             router_prompt_spec = ChatPromptTemplate.from_messages([
                 ("system", """You are an expert query router. Based on the user's query, data columns, and a sample of the data, determine the primary action required.
                 The available actions are: 'visualize', 'query_data', or 'fallback'.
@@ -279,11 +192,9 @@ async def process_query(request: QueryRequest):
                 "router_df_head": current_file_info.df_head,
                 "router_user_query": user_query
             }
-            # The thinking_log for this specific router call in app.py isn't strictly necessary
-            # unless you want to capture it separately here.
             app_router_log = [f"--- App.py Router for Session {session_id} ---"]
             
-            route_result_instance, _ = await get_structured_output_from_openai(
+            route_result_instance, _ = await get_structured_output(
                 RouteQuery, router_prompt_spec, router_prompt_input, app_router_log, "APP_ROUTER"
             )
 
@@ -292,16 +203,16 @@ async def process_query(request: QueryRequest):
                 reasoning = getattr(route_result_instance, 'reasoning', 'N/A')
                 logger.info(f"Router decision (app.py): {action_type_for_routing}, Reasoning: {reasoning}")
             else:
-                logger.warning("App.py Router: get_structured_output_from_openai returned None. Falling back.")
+                logger.warning("App.py Router: get_structured_output returned None. Falling back.")
                 action_type_for_routing = "fallback_due_to_router_failure"
         else:
-            logger.warning("LLM/Router components (agent_openai_client, ChatPromptTemplate, RouteQuery, get_structured_output_from_openai) not fully available. Using basic keyword matching for routing in app.py.")
+            logger.warning("LLM/Router components not fully available. Using basic keyword matching for routing in app.py.")
             if any(kw in user_query.lower() for kw in ["plot", "chart", "graph", "visualize", "show me", "draw"]):
                 action_type_for_routing = "visualize"
+                
     except Exception as e_router:
         logger.error(f"Error in app.py query routing for session {session_id}: {e_router}", exc_info=True)
         action_type_for_routing = "fallback_due_to_router_error"
-
 
     async def combined_stream_generator():
         try:
@@ -342,4 +253,4 @@ if __name__ == "__main__":
     logger.info("Starting Uvicorn dev server (Async Agent Mode) on http://0.0.0.0:8000")
     # For Windows with potential asyncio issues when reload=True, you might need to run uvicorn differently:
     # uvicorn.run("app:app", host="0.0.0.0", port=8000, workers=1) # if reload=True causes issues.
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+    uvicorn.run("app:app", port=8000, reload=True, log_level="info")

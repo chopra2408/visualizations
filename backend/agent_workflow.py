@@ -5,64 +5,37 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, ValidationError
 from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
-from backend.utils import generate_plot_from_config, calculate_age_from_dob  
-from backend.models import PlotConfig 
+from utils import generate_plot_from_config, calculate_age_from_dob  
+from models import PlotConfig 
 import numpy as np
 import traceback
 import json
-from openai import AsyncAzureOpenAI
-from langchain_core.utils.function_calling import convert_to_openai_tool
-from langchain_core.messages import BaseMessage
-import httpx  
+from langchain_groq import ChatGroq
 import asyncio  
 
 # Load environment variables
 dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path)
 
-llm_azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-llm_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-llm_api_version = os.environ.get("AZURE_OPENAI_API_VERSION") # Default if not set
-llm_deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
-openai_client: Optional[AsyncAzureOpenAI] = None
-custom_http_client_for_openai: Optional[httpx.AsyncClient] = None
+groq_api_key = os.environ.get("GROQ_API_KEY")
+groq_model_name = os.environ.get("GROQ_MODEL_NAME", "llama-3.3-70b-versatile")
 
-try:
-    if not all([llm_azure_endpoint, llm_api_key, llm_deployment_name]):
-        missing_vars = [
-            var_name for var_name, var_val in {
-                "AZURE_OPENAI_ENDPOINT": llm_azure_endpoint,
-                "AZURE_OPENAI_API_KEY": llm_api_key,
-                "AZURE_OPENAI_DEPLOYMENT_NAME": llm_deployment_name
-            }.items() if not var_val
-        ]
-        raise ValueError(f"Missing Azure OpenAI environment variables: {', '.join(missing_vars)}")
-
-    client_args = {
-        "azure_endpoint": llm_azure_endpoint,
-        "api_key": llm_api_key,
-        "api_version": llm_api_version,
-        "azure_deployment": llm_deployment_name, # Default deployment for this client
-    }
-
-    # if PROXY_URI:
-    #     print(f"INFO: Configuring OpenAI client to use proxy: {PROXY_URI}")
-    #     proxies = {
-    #         "http://": PROXY_URI,
-    #         "https://": PROXY_URI,
-    #     }
-    #     custom_http_client_for_openai = httpx.AsyncClient(proxies=proxies, timeout=30.0) # Added timeout
-    #     client_args["http_client"] = custom_http_client_for_openai
-    
-    openai_client = AsyncAzureOpenAI(**client_args)
-    print("INFO: AsyncAzureOpenAI Client Initialized successfully in agent_workflow.py.")
-
-except Exception as e:
-    print(f"FATAL ERROR initializing AsyncAzureOpenAI Client in agent_workflow.py: {e}")
-    openai_client = None
-    # If a custom client was created, it should be closed on application shutdown.
-    # For simplicity in this script, we're not managing its explicit closure here on init failure.
-    # In a long-running app, ensure custom_http_client_for_openai.aclose() is called.
+# Initialize ChatGroq LLM
+if not groq_api_key:
+    print("FATAL ERROR: GROQ_API_KEY not found in environment.")
+    llm = None
+else:
+    try:
+        llm = ChatGroq(
+            groq_api_key=groq_api_key,
+            model_name=groq_model_name,
+            temperature=0,
+            streaming=True
+        )
+        print(f"INFO: ChatGroq initialized successfully with model: {groq_model_name}")
+    except Exception as e:
+        print(f"FATAL ERROR initializing ChatGroq: {e}")
+        llm = None
 
 class AgentState(TypedDict):
     user_query: str
@@ -85,78 +58,37 @@ class PlotInsights(BaseModel):
     insights: str = Field(description="A concise textual summary of what the plot shows and any key observations or conclusions that can be drawn from it.")
     suggestions: Optional[List[str]] = Field(None, description="Optional: 1-2 follow-up questions or related plots.")
 
-def _convert_lc_messages_to_openai_format(lc_messages: List[BaseMessage]) -> List[dict]:
-    """Converts Langchain BaseMessage objects to OpenAI API message format."""
-    out_messages = []
-    for msg in lc_messages:
-        role = "system" # Default
-        if msg.type == "human": role = "user"
-        elif msg.type == "ai": role = "assistant"
-        elif msg.type == "system": role = "system"
-        elif msg.type == "function": role = "function" # For function/tool calls
-        elif msg.type == "tool": role = "tool" # For tool results
-        else: # Fallback for older or different structures, might need adjustment
-            if msg.__class__.__name__ == "SystemMessage": role = "system"
-            elif msg.__class__.__name__ == "HumanMessage": role = "user"
-            elif msg.__class__.__name__ == "AIMessage": role = "assistant"
-            
-        content = msg.content
-        if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs.get('function_call'):
-            # Handle AIMessage with function_call for older Langchain versions if needed
-            # For new openai lib, tool_calls is preferred.
-            pass # This path might need refinement if you hit it with specific Langchain versions
-        
-        out_messages.append({"role": role, "content": content})
-    return out_messages
-
-
-async def get_structured_output_from_openai(
+async def get_structured_output(
     pydantic_model: Type[BaseModel],
     prompt_template: ChatPromptTemplate,
     prompt_input: dict,
     thinking_log: List[str],
     log_prefix: str
 ) -> Tuple[Optional[BaseModel], List[str]]:
+    """Helper to get structured Pydantic output using LangChain Groq."""
     current_log = list(thinking_log)
-    if openai_client is None or llm_deployment_name is None: # Also check deployment name
-        current_log.append(f"{log_prefix}_ERROR: OpenAI client or deployment name not available.")
+    if llm is None:
+        current_log.append(f"{log_prefix}_ERROR: Groq LLM not initialized.")
         return None, current_log
 
-    tool_schema = convert_to_openai_tool(pydantic_model)
-    
     try:
-        prompt_value = prompt_template.invoke(prompt_input)
-        messages = _convert_lc_messages_to_openai_format(prompt_value.to_messages())
-
-        current_log.append(f"{log_prefix}_PROMPT_MESSAGES (first 500 chars): {json.dumps(messages, indent=0)[:500]}...")
-
-        response = await openai_client.chat.completions.create(
-            model=llm_deployment_name, # Explicitly pass deployment name
-            messages=messages,
-            tools=[tool_schema],
-            tool_choice={"type": "function", "function": {"name": tool_schema['function']['name']}}
-        )
-        message = response.choices[0].message
-        if message.tool_calls:
-            tool_call = message.tool_calls[0]
-            function_args = tool_call.function.arguments
-            current_log.append(f"{log_prefix}_RAW_ARGS: {function_args}")
-            try:
-                instance = pydantic_model.model_validate_json(function_args)
-                current_log.append(f"{log_prefix}_SUCCESS: Parsed to {pydantic_model.__name__}")
-                return instance, current_log
-            except ValidationError as e:
-                current_log.append(f"{log_prefix}_PARSE_ERROR: Pydantic validation for {pydantic_model.__name__} failed: {e}. Args: {function_args}")
-                traceback.print_exc()
-                return None, current_log
+        # LangChain handles the tool binding and JSON parsing automatically
+        structured_llm = llm.with_structured_output(pydantic_model)
+        chain = prompt_template | structured_llm
+        
+        current_log.append(f"{log_prefix}_CALLING_GROQ: Requesting structured data...")
+        
+        result = await chain.ainvoke(prompt_input)
+        
+        if result:
+            current_log.append(f"{log_prefix}_SUCCESS: Parsed to {pydantic_model.__name__}")
+            return result, current_log
         else:
-            error_detail = f"No tool_calls in LLM response. Content: {message.content}"
-            current_log.append(f"{log_prefix}_ERROR: {error_detail}")
-            if message.content:
-                 current_log.append(f"{log_prefix}_FALLBACK_CONTENT: {message.content}")
+            current_log.append(f"{log_prefix}_ERROR: LLM returned None or failed to parse.")
             return None, current_log
+            
     except Exception as e:
-        current_log.append(f"{log_prefix}_CALL_ERROR: LLM call for {pydantic_model.__name__} failed: {type(e).__name__} {str(e)}")
+        current_log.append(f"{log_prefix}_CALL_ERROR: {str(e)}")
         traceback.print_exc()
         return None, current_log
 
@@ -165,10 +97,7 @@ async def generate_insights_for_plot(
     user_query_str: str, current_thinking_log: List[str]
 ) -> Tuple[Optional[str], List[str]]:
     thinking_log = list(current_thinking_log)
-    if openai_client is None:
-        thinking_log.append("INSIGHTS_ERROR: OpenAI client not available.")
-        return "Could not generate insights: OpenAI client not available.", thinking_log
-
+    
     desc = (f"An interactive '{plot_config.plot_type}' plot titled '{plot_config.title or 'N/A'}' was generated. "
             f"X-axis: '{plot_config.xlabel or plot_config.x_column or 'N/A'}'. "
             f"Y-axis: '{plot_config.ylabel or plot_config.y_column or 'N/A'}'. "
@@ -195,7 +124,7 @@ async def generate_insights_for_plot(
         "data_sample_for_insights": df_head_sample
     }
 
-    plot_insights_instance, thinking_log = await get_structured_output_from_openai(
+    plot_insights_instance, thinking_log = await get_structured_output(
         PlotInsights, insights_prompt_template, prompt_input, thinking_log, "INSIGHTS"
     )
 
@@ -209,16 +138,11 @@ async def generate_insights_for_plot(
         thinking_log.append("INSIGHTS_ERROR: Failed to get structured PlotInsights.")
         return "Could not generate insights due to an internal error.", thinking_log
 
-
 async def router_node(state: AgentState) -> AgentState:
     print("\n--- Router Node ---")
     current_log = state.get("thinking_log", [])
     current_log.extend(["--- Router Node: Initiated ---", f"Query: '{state['user_query']}'"])
-
-    if openai_client is None:
-        current_log.append("Router_ERROR: OpenAI client not available.")
-        return {**state, "action_type": "fallback", "error_message": "OpenAI client unavailable.", "llm_response": "System error: LLM client is down.", "thinking_log": current_log}
-
+    
     router_prompt = ChatPromptTemplate.from_messages([
         ("system", """You are an expert query router. Based on the user's query, data columns, and a sample of the data, determine the primary action required.
         The available actions are: 'visualize', 'query_data', or 'fallback'.
@@ -235,7 +159,7 @@ async def router_node(state: AgentState) -> AgentState:
         "router_user_query": state["user_query"]
     }
 
-    route_query_instance, current_log = await get_structured_output_from_openai(
+    route_query_instance, current_log = await get_structured_output(
         RouteQuery, router_prompt, prompt_input, current_log, "ROUTER"
     )
 
@@ -246,41 +170,47 @@ async def router_node(state: AgentState) -> AgentState:
         current_log.append("Router_ERROR: Failed to get structured RouteQuery from LLM.")
         return {**state, "action_type": "fallback", "error_message": "Error in routing: Could not determine action from LLM.", "llm_response": "Error in routing decision.", "thinking_log": current_log}
 
-
 async def stream_pre_agent_summary(
     user_query: str, df_head_str: str, df_columns: List[str], intended_action: str
 ):
     print(f"\n--- Streaming Pre-Agent Summary for action: {intended_action} ---")
-    if openai_client is None or llm_deployment_name is None:
-        yield json.dumps({"type": "error", "chunk": "OpenAI client or deployment name not available for pre-summary."}) + "\n"; return
+    
+    if llm is None:
+        yield json.dumps({"type": "error", "chunk": "Groq LLM not initialized."}) + "\n"
+        return
 
     summary_prompt_system = f"""You are a helpful AI assistant providing a quick plan.
     Dataset columns: {df_columns}, Data sample (first 5 rows): {df_head_str}
     User query: "{user_query}", Your current intended action is: '{intended_action}'.
     Provide a concise, user-friendly summary of your plan (1-2 sentences).
     """
-    pre_summary_prompt_template = ChatPromptTemplate.from_messages([("system", summary_prompt_system), ("human", "Briefly, what's your plan?")])
-    prompt_value = pre_summary_prompt_template.invoke({})
-    messages = _convert_lc_messages_to_openai_format(prompt_value.to_messages())
+    
+    pre_summary_prompt_template = ChatPromptTemplate.from_messages([
+        ("system", summary_prompt_system), 
+        ("human", "Briefly, what's your plan?")
+    ])
 
     try:
-        stream = await openai_client.chat.completions.create(
-            model=llm_deployment_name, # Explicitly pass deployment name
-            messages=messages,
-            stream=True
-        )
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content is not None:
-                yield json.dumps({"type": "thinking_process_update", "chunk": chunk.choices[0].delta.content}) + "\n"
+        chain = pre_summary_prompt_template | llm
+        async for chunk in chain.astream({}):
+            if chunk.content:
+                yield json.dumps({
+                    "type": "thinking_process_update", 
+                    "chunk": chunk.content
+                }) + "\n"
+                
     except Exception as e:
-        print(f"Error during pre-agent summary streaming: {e}"); traceback.print_exc()
+        print(f"Error during Groq pre-agent summary streaming: {e}")
+        traceback.print_exc()
         yield json.dumps({"type": "error", "chunk": f"Error in pre-summary stream: {str(e)}"}) + "\n"
-
+        
 async def stream_qna_response(user_query: str, df_head_str: str, df_columns: List[str]):
     print("\n--- Streaming Q&A Response Directly ---")
-    if openai_client is None or llm_deployment_name is None:
-        yield json.dumps({"type": "error", "chunk": "OpenAI client or deployment name not available for Q&A."}) + "\n"; return
     
+    if llm is None:
+        yield json.dumps({"type": "error", "chunk": "Groq LLM not initialized."}) + "\n"
+        return
+
     prompt_template_messages_spec = [
         ("system", f"""You are a helpful AI assistant.
          Dataset columns: {df_columns}, Data sample (first 5 rows): {df_head_str}
@@ -292,22 +222,15 @@ async def stream_qna_response(user_query: str, df_head_str: str, df_columns: Lis
         ("human", "{user_query_for_qna}")
     ]
     prompt_template = ChatPromptTemplate.from_messages(prompt_template_messages_spec)
-    prompt_value = prompt_template.invoke({"user_query_for_qna": user_query})
-    messages = _convert_lc_messages_to_openai_format(prompt_value.to_messages())
     
     try:
-        stream = await openai_client.chat.completions.create(
-            model=llm_deployment_name, # Explicitly pass deployment name
-            messages=messages,
-            stream=True
-        )
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content is not None:
-                yield json.dumps({"type": "content", "chunk": chunk.choices[0].delta.content}) + "\n"
+        chain = prompt_template | llm
+        async for chunk in chain.astream({"user_query_for_qna": user_query}):
+            if chunk.content:
+                yield json.dumps({"type": "content", "chunk": chunk.content}) + "\n"
     except Exception as e:
         print(f"Error during Q&A streaming in agent_workflow: {e}"); traceback.print_exc()
         yield json.dumps({"type": "error", "chunk": f"Error in Q&A stream: {str(e)}"}) + "\n"
-
 
 async def visualization_node(state: AgentState) -> AgentState:
     print("\n--- Visualization Node ---")
@@ -331,7 +254,7 @@ async def visualization_node(state: AgentState) -> AgentState:
     thinking_log.append(f"VIZ_INFO: User Query: '{user_query}'")
     thinking_log.append(f"VIZ_INFO: Available columns: {df_columns_list}")
 
-    # 1. Programmatic Age Distribution Check (remains synchronous logic)
+    # 1. Programmatic Age Distribution Check
     age_distribution_keywords = ["age distribution", "distribution of age", "histogram of age", "age histogram", "kde of age", "age kde", "bell curve of age"]
     user_wants_age_distribution = any(kw in user_query_lower for kw in age_distribution_keywords)
     thinking_log.append(f"VIZ_CHECK: User wants age distribution? {user_wants_age_distribution}")
@@ -372,12 +295,11 @@ async def visualization_node(state: AgentState) -> AgentState:
         else:
             thinking_log.append(f"{log_prefix}Could not find or derive suitable age column programmatically. Will try LLM if needed.")
 
-
     # 2. LLM for PlotConfig if not programmatically set
     if plot_config_obj is None:
-        if openai_client is None:
-            thinking_log.append("VIZ_LLM_ERROR: OpenAI client is not available.")
-            return {**state, "error_message": "OpenAI client not available for plotting.", "llm_response": "System error: Cannot determine plot settings.", "thinking_log": thinking_log}
+        if llm is None:
+            thinking_log.append("VIZ_LLM_ERROR: Groq LLM is not available.")
+            return {**state, "error_message": "LLM not available for plotting.", "llm_response": "System error: Cannot determine plot settings.", "thinking_log": thinking_log}
 
         thinking_log.append("VIZ_LLM_ACTION: Using LLM to determine plot configuration.")
         actual_dob_col_for_llm = next((c for c in df_columns_list if c.lower() in ["date of birth", "dob", "birth date", "birthdate"]), None)
@@ -393,15 +315,6 @@ async def visualization_node(state: AgentState) -> AgentState:
         cardinality_info_dict = {col: df_full[col].nunique() for col in df_columns_list if col in df_full}
         cardinality_prompt_str = "\n".join([f"  - Column '{col}': {count} unique values" for col, count in cardinality_info_dict.items()])
         
-        # In agent_workflow.py, within visualization_node:
-
-        # ... (existing code) ...
-        cardinality_info_dict = {col: df_full[col].nunique() for col in df_columns_list if col in df_full}
-        cardinality_prompt_str = "\n".join([f"  - Column '{col}': {count} unique values" for col, count in cardinality_info_dict.items()])
-        
-        # In agent_workflow.py, within visualization_node:
-# ... (existing parts of the prompt) ...
-
         system_prompt_for_plot_config = f"""You are an expert data visualization advisor. Your PRIMARY GOAL is to create plots that are EXTREMELY CLEAR, READABLE, and INSIGHTFUL for a non-expert user. AVOID CLUTTER AT ALL COSTS.
 Output your choice strictly using the PlotConfig schema.
 
@@ -459,7 +372,7 @@ Your primary duty is to translate the user's request into the MOST UNDERSTANDABL
             "derived_age_col_name": derived_age_col_name
         }
 
-        plot_config_obj_llm, thinking_log = await get_structured_output_from_openai(
+        plot_config_obj_llm, thinking_log = await get_structured_output(
             PlotConfig, viz_prompt_template, prompt_input_viz, thinking_log, "VIZ_LLM_CONFIG"
         )
         
@@ -482,11 +395,10 @@ Your primary duty is to translate the user's request into the MOST UNDERSTANDABL
                         plot_config_obj = None
                         thinking_log.append(f"VIZ_LLM_ERROR: Invalidated PlotConfig due to failed critical age derivation for {plot_config_obj.plot_type if plot_config_obj else 'N/A'}.")
         else:
-            thinking_log.append("VIZ_LLM_ERROR: Failed to get PlotConfig from LLM (get_structured_output_from_openai returned None).")
+            thinking_log.append("VIZ_LLM_ERROR: Failed to get PlotConfig from LLM (get_structured_output returned None).")
             plot_config_obj = None
 
-
-    # 3. Final check for PlotConfig and Validation (remains synchronous logic)
+    # 3. Final check for PlotConfig and Validation
     if plot_config_obj is None:
         thinking_log.append("VIZ_ERROR: PlotConfig is None after all attempts (programmatic and LLM).")
         return {**state, "error_message": "Could not determine how to configure the plot for your request.", "llm_response": "I'm unable to create the visualization as I couldn't determine the necessary settings.", "thinking_log": thinking_log}
@@ -509,7 +421,7 @@ Your primary duty is to translate the user's request into the MOST UNDERSTANDABL
 
     final_plot_df = df_to_plot
 
-    # 4. Generate plot (Plotly JSON string) - synchronous
+    # 4. Generate plot (Plotly JSON string)
     thinking_log.append(f"VIZ_PLOT_ATTEMPT: Generating interactive plot with final config: {plot_config_obj.model_dump_json(indent=0)}")
     try:
         plotly_json_string = generate_plot_from_config(final_plot_df, plot_config_obj)
@@ -540,13 +452,13 @@ Your primary duty is to translate the user's request into the MOST UNDERSTANDABL
         traceback.print_exc()
         return {**state, "error_message": f"A critical error occurred while creating the interactive plot: {str(e_plotting)}", "llm_response": "Sorry, an unexpected error stopped me from creating the interactive plot.", "plot_config_json": plot_config_obj.model_dump_json(), "thinking_log": thinking_log}
 
-
 async def qna_node(state: AgentState) -> AgentState:
     current_log = state.get("thinking_log", [])
     current_log.append("--- QnA Node: Initiated ---")
-    if openai_client is None or llm_deployment_name is None:
-        current_log.append("QnA_ERROR: OpenAI client or deployment name not available.")
-        return {**state, "error_message": "OpenAI client/deployment unavailable.", "llm_response": "LLM error: Client not available.", "thinking_log": current_log}
+    
+    if llm is None:
+        current_log.append("QnA_ERROR: Groq LLM not initialized.")
+        return {**state, "error_message": "LLM unavailable.", "llm_response": "LLM error: Client not available.", "thinking_log": current_log}
 
     qna_prompt_template = ChatPromptTemplate.from_messages([
         ("system", "Answer the user's question based on the provided column names and data sample.\nColumns: {qna_df_cols}\nSample Data:\n{qna_df_head}"),
@@ -558,21 +470,15 @@ async def qna_node(state: AgentState) -> AgentState:
         "qna_df_head": state["df_head_str"],
         "qna_user_query": state["user_query"]
     }
-    prompt_value = qna_prompt_template.invoke(prompt_input)
-    messages = _convert_lc_messages_to_openai_format(prompt_value.to_messages())
 
     try:
-        response = await openai_client.chat.completions.create(
-            model=llm_deployment_name, # Explicitly pass deployment name
-            messages=messages
-        )
-        llm_content = response.choices[0].message.content
+        chain = qna_prompt_template | llm
+        response = await chain.ainvoke(prompt_input)
         current_log.append("QnA_SUCCESS: Response generated.")
-        return {**state, "llm_response": llm_content, "thinking_log": current_log, "error_message": None}
+        return {**state, "llm_response": response.content, "thinking_log": current_log, "error_message": None}
     except Exception as e:
         current_log.append(f"QnA_ERROR: {str(e)}"); traceback.print_exc()
         return {**state, "error_message": str(e), "llm_response": "Error in QnA processing.", "thinking_log": current_log}
-
 
 def fallback_node(state: AgentState) -> AgentState:
     log = state.get("thinking_log", [])
@@ -592,13 +498,12 @@ def decide_next_node(state: AgentState) -> str:
     if action == "query_data": return "qna_agent"
     return "fallback_agent"
 
-
 # Workflow setup
 workflow = StateGraph(AgentState)
 workflow.add_node("router", router_node)
 workflow.add_node("visualization_agent", visualization_node)
 workflow.add_node("qna_agent", qna_node)
-workflow.add_node("fallback_agent", fallback_node) # Sync
+workflow.add_node("fallback_agent", fallback_node) 
 
 workflow.set_entry_point("router")
 workflow.add_conditional_edges("router", decide_next_node, {
@@ -621,8 +526,8 @@ async def run_agent(user_query: str, df: pd.DataFrame) -> dict:
     print(f"\n--- Running Agent Graph for Query: '{user_query}' ---")
     if app_graph is None:
         return {"response_type": "error", "content": "Agent graph not compiled.", "thinking_log_str": "Graph not compiled.", "error": "Graph compilation failed."}
-    if openai_client is None: # Check if client itself is None
-        return {"response_type": "error", "content": "OpenAI client not initialized.", "thinking_log_str": "OpenAI client None.", "error": "OpenAI client None."}
+    if llm is None: 
+        return {"response_type": "error", "content": "Groq LLM not initialized.", "thinking_log_str": "Groq LLM None.", "error": "Groq LLM None."}
     if df is None or df.empty:
         return {"response_type": "error", "content": "No data provided to agent.", "thinking_log_str": "DataFrame empty.", "error": "DataFrame empty."}
 
@@ -678,17 +583,10 @@ async def run_agent(user_query: str, df: pd.DataFrame) -> dict:
     }
     return response
 
-# Example of how to run this if called directly (for testing)
-# This part would typically not be in the agent_workflow.py if it's a module.
-# It's here for completeness of a runnable example.
 async def main_test():
     print("Starting main_test for agent_workflow.py")
-    if openai_client is None:
-        print("OpenAI client not initialized. Exiting test.")
-        # Clean up custom http client if it was created
-        if custom_http_client_for_openai:
-            print("Closing custom HTTP client...")
-            await custom_http_client_for_openai.aclose()
+    if llm is None:
+        print("Groq LLM not initialized. Exiting test.")
         return
 
     # Create a sample DataFrame
@@ -701,7 +599,6 @@ async def main_test():
     sample_df = pd.DataFrame(sample_data)
 
     test_query = "Show me the age distribution"
-    # test_query = "What is the average score?" # For QnA node
 
     print(f"Running agent with test query: '{test_query}'")
     result = await run_agent(test_query, sample_df)
@@ -717,33 +614,11 @@ async def main_test():
         print("Plot Insights:", result['plot_insights'])
     if result.get('error'):
         print(f"Error: {result.get('error')}")
-    # print("\nThinking Log:")
-    # print(result.get('thinking_log_str'))
     print("--- End of Agent Test Result ---")
-
-    # Clean up: Close the custom http client if it was created
-    if custom_http_client_for_openai:
-        print("Closing custom HTTP client...")
-        await custom_http_client_for_openai.aclose()
-    # Also close the main openai_client if it has an aclose method (AsyncAzureOpenAI should)
-    if openai_client and hasattr(openai_client, 'close'): # Older versions might not have close
-        print("Closing main OpenAI client...")
-        await openai_client.close()
-    elif openai_client and hasattr(openai_client, 'aclose'): # Newer versions use aclose
-        print("Closing main OpenAI client (aclose)...")
-        await openai_client.aclose()
 
 
 if __name__ == "__main__":
-    # Ensure that .env is in the parent directory relative to this script, or adjust path.
-    # For this test to run, you'd execute `python agent_workflow.py` from the directory
-    # where `agent_workflow.py` is located.
-    
-    # Check if .env variables are loaded.
-    if not all([llm_azure_endpoint, llm_api_key, llm_deployment_name]):
-         print("ERROR: One or more Azure OpenAI environment variables are not set.")
-         print("Please ensure AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT_NAME are in your .env file.")
+    if not groq_api_key:
+         print("ERROR: GROQ_API_KEY environment variable is not set.")
     else:
         asyncio.run(main_test())
-
-# --- END OF FILE agent_workflow.py ---

@@ -1,7 +1,7 @@
 import pandas as pd
 from typing import Optional, Tuple
 from datetime import datetime
-from backend.models import PlotConfig
+from models import PlotConfig
 import traceback
 import numpy as np
 import plotly.io as pio

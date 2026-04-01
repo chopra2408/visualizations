@@ -5,3 +5,5 @@ data_uploads
 test_data
 edge1
 edge2
+__pycache__
+frontend
